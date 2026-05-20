@@ -1,0 +1,39 @@
+# Binaries (root-anchored to avoid matching cmd/argus-agent/ directory)
+/argus-agent
+/argus-agent.exe
+*.exe
+*.out
+
+# Build artifacts
+/dist/
+/bin/
+
+# Go tooling
+vendor/
+
+# Secrets — never commit these
+*.key
+*.pem
+*.p12
+*.pfx
+agent-state.json
+argus-agent.key
+.env
+.env.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+coverage.out
+*.test
+
+# GeoIP database (downloaded at runtime)
+*.mmdb

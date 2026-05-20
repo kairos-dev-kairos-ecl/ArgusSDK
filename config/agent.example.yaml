@@ -1,0 +1,137 @@
+# argus-agent configuration
+# Copy to agent.yaml and populate before starting the agent.
+# All values can be overridden with ARGUS_SDK_<UPPER_DOTTED_PATH> environment variables.
+# Example: agent.mode → ARGUS_SDK_AGENT_MODE=remote
+
+# ---------------------------------------------------------------------------
+# Agent identity
+# ---------------------------------------------------------------------------
+agent:
+  # group_id is assigned by the ArgusXDR admin when creating an Agent Group.
+  group_id: "grp_xxxxxxxxxxxx"
+
+  # instance_name is a human-readable label for this specific agent deployment.
+  # It is displayed in the XDR dashboard but does not affect routing.
+  instance_name: "prod-llm-server-01"
+
+  # mode controls transport and auth requirements.
+  # local  → loopback/Unix socket, simplified auth, no mandatory TLS
+  # remote → TLS 1.3 mandatory, full three-part auth (group_id + instance_id + credential)
+  mode: "remote"
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+auth:
+  # install_token is issued by XDR when the Agent Group is created.
+  # It is consumed ONCE during the registration handshake, then invalidated by XDR.
+  # After successful registration, clear this value and rely on instance_id.
+  # Supply via env var in production: ARGUS_SDK_AUTH_INSTALL_TOKEN=<token>
+  install_token: ""
+
+  # instance_id is the server-assigned UUID returned after registration.
+  # The agent persists this value to agent-state.json (encrypted).
+  # Do not set manually; the agent populates it on first run.
+  instance_id: ""
+
+  # credential is the rotating API credential for signal submission.
+  # Populated by the agent after registration; rotated automatically.
+  # Supply via env var: ARGUS_SDK_AUTH_CREDENTIAL=<credential>
+  credential: ""
+
+# ---------------------------------------------------------------------------
+# Local ingest listener (receives signals from Python/TS instrumentation libs)
+# ---------------------------------------------------------------------------
+ingest:
+  listen:
+    # grpc is the TCP address for the gRPC ingest server.
+    # Instrumentation libraries connect here to submit signals.
+    # Bind to 127.0.0.1 (loopback only) unless you have a specific reason not to.
+    grpc: "127.0.0.1:5002"
+
+    # unix is the path to an optional Unix domain socket.
+    # Lower overhead than loopback TCP for co-located applications.
+    # Leave empty to disable.
+    unix: "/var/run/argus-agent.sock"
+
+# ---------------------------------------------------------------------------
+# Local signal buffer (used when output connectors are unreachable)
+# ---------------------------------------------------------------------------
+buffer:
+  # dir is the directory where WAL segment files are stored.
+  # The agent creates it on startup if it does not exist.
+  dir: "/var/lib/argus-agent/buffer"
+
+  # max_size_mb is the total disk space the buffer may consume.
+  # When exceeded, the oldest segments are dropped and a metric is incremented.
+  max_size_mb: 256
+
+  # flush_interval controls how often the agent attempts to drain the buffer
+  # to output connectors when connectivity is restored.
+  flush_interval: "5s"
+
+  # drain_on_reconnect triggers an eager drain as soon as a connector reports
+  # healthy again, rather than waiting for the next flush_interval tick.
+  drain_on_reconnect: true
+
+# ---------------------------------------------------------------------------
+# Output connectors
+# Multiple outputs are supported; signals are delivered to all healthy connectors.
+# ---------------------------------------------------------------------------
+outputs:
+  # --- Mode 1: ArgusXDR (native proto, no OCSF translation) ---
+  - name: "argusxdr-primary"
+    type: "argusxdr"
+    endpoint: "https://xdr.company.com:8080"
+    tls:
+      enabled: true
+      # ca_cert: "/etc/argus-agent/xdr-ca.pem"  # optional custom CA
+    auth:
+      group_id: "${agent.group_id}"
+      instance_id: "${auth.instance_id}"
+      # credential resolved from secrets store at runtime
+
+  # --- Mode 2: Splunk HEC (OCSF translation applied before delivery) ---
+  # - name: "splunk-siem"
+  #   type: "splunk_hec"
+  #   endpoint: "https://splunk.company.com:8088"
+  #   ocsf: true
+  #   auth:
+  #     token: "${ARGUS_SDK_SPLUNK_TOKEN}"
+
+  # --- Mode 2: Kafka (OCSF translation applied before delivery) ---
+  # - name: "kafka-siem"
+  #   type: "kafka"
+  #   ocsf: true
+  #   brokers:
+  #     - "kafka-01.company.com:9092"
+  #     - "kafka-02.company.com:9092"
+  #   topic: "argus-signals-ocsf"
+  #   sasl:
+  #     mechanism: "SCRAM-SHA-256"
+  #     username: "argus-agent"
+  #     password: "${ARGUS_SDK_KAFKA_PASSWORD}"
+
+  # --- Syslog (CEF/ArcSight, no OCSF) ---
+  # - name: "syslog-siem"
+  #   type: "syslog"
+  #   endpoint: "siem.company.com:514"
+  #   transport: "tls"   # udp | tcp | tls
+
+# ---------------------------------------------------------------------------
+# TLS global settings (enforced for all outbound connections)
+# ---------------------------------------------------------------------------
+tls:
+  # min_version is always 1.3 for remote mode. This field is documented here
+  # for clarity; there is no config option to downgrade below TLS 1.3.
+  min_version: "1.3"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  # level: debug | info | warn | error
+  level: "info"
+
+  # format: json (production) | console (development)
+  format: "json"
