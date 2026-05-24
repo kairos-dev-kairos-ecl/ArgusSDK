@@ -10,7 +10,7 @@ all depend on. SPEC-3 is locked: unary `SDKIngestService.IngestBatch`, slim `SDK
 
 ## Phases
 
-- [ ] **Phase 1: Proto + Codegen + Signal Alignment** - Write ingest.proto, configure buf codegen, align pkg/signal with proto field numbers
+- [x] **Phase 1: Proto + Codegen + Signal Alignment** - Write ingest.proto, configure buf codegen, align pkg/signal with proto field numbers
 
 ## Phase Details
 
@@ -27,12 +27,12 @@ all depend on. SPEC-3 is locked: unary `SDKIngestService.IngestBatch`, slim `SDK
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Write proto/sdk/v1/ingest.proto
-- [ ] 01-02: Add buf toolchain + Makefile codegen target
-- [ ] 01-03: Update pkg/signal with FromProto/ToProto conversions
+- [x] 01-01: Write proto/sdk/v1/ingest.proto
+- [x] 01-02: Add buf toolchain + Makefile codegen target
+- [x] 01-03: Update pkg/signal with FromProto/ToProto conversions
 
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Proto + Codegen + Signal Alignment | 0/3 | Not started | - |
+| 1. Proto + Codegen + Signal Alignment | 3/3 | Complete | 2026-05-25 |
