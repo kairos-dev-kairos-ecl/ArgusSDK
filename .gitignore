@@ -37,3 +37,6 @@ coverage.out
 
 # GeoIP database (downloaded at runtime)
 *.mmdb
+
+# Windows protoc descriptor output (protoc uses 'nul' as /dev/null equivalent on Windows)
+/nul
