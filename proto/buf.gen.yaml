@@ -1,0 +1,23 @@
+version: v2
+
+# Code generation pipeline for proto/sdk/v1/ingest.proto.
+# Generates Go server stubs using remote buf.build plugins.
+#
+# Deferred plugin entries (add here when WS-G6 runs):
+#   Python gRPC stubs (grpcio-tools):
+#     - remote: buf.build/grpc/python
+#       out: ../gen/python/sdk/v1
+#       opt: paths=source_relative
+#   TypeScript stubs (ts-proto):
+#     - remote: buf.build/community/timostamm-protobuf-ts
+#       out: ../gen/typescript/sdk/v1
+#       opt: paths=source_relative
+
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: ../gen/go/sdk/v1
+    opt: paths=source_relative
+
+  - remote: buf.build/grpc/go
+    out: ../gen/go/sdk/v1
+    opt: paths=source_relative

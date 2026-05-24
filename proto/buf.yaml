@@ -1,0 +1,14 @@
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - DEFAULT
+
+breaking:
+  use:
+    - FILE
+  against:
+    - "git#branch=main"
