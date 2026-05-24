@@ -4,7 +4,12 @@
 // agent; they do NOT reference any XDR-internal packages.
 package signal
 
-import "time"
+import (
+	"time"
+
+	sdkv1 "github.com/kairos-dev-kairos-ecl/ArgusSDK/gen/go/sdk/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
 
 // Layer mirrors the 10-layer LLM taxonomy from the ArgusSignal proto.
 // Values are kept numerically identical so proto enum casts are zero-cost.
@@ -78,4 +83,72 @@ type Batch struct {
 	AppID   string
 	Env     string
 	Signals []Signal
+}
+
+// FromProto converts a proto SDKSignal to the internal Signal type.
+// It maps all 14 SDKSignal fields. Note that AppID, Env, and SDKVersion are
+// NOT set by this function — those fields come from the enclosing SignalBatch
+// and must be set by the caller after receiving the batch.
+//
+// If p.Timestamp is nil (proto3 optional message field), Signal.Timestamp is
+// left as the zero value (time.Time{}) to avoid a nil-pointer panic.
+func FromProto(p *sdkv1.SDKSignal) Signal {
+	s := Signal{
+		SignalID:       p.SignalId,
+		TraceID:        p.TraceId,
+		SpanID:         p.SpanId,
+		ParentSpanID:   p.ParentSpanId,
+		Layer:          Layer(p.Layer),
+		Category:       p.Category,
+		Severity:       Severity(p.Severity),
+		DurationMS:     p.DurationMs,
+		ContextJSON:    p.ContextJson,
+		SessionID:      p.SessionId,
+		ConversationID: p.ConversationId,
+		UserID:         p.UserId,
+		AppVersion:     p.AppVersion,
+		// AppID, Env, SDKVersion intentionally omitted — set from SignalBatch by caller
+	}
+	if p.Timestamp != nil {
+		s.Timestamp = p.Timestamp.AsTime()
+	}
+	return s
+}
+
+// toProtoSignal converts an internal Signal to a proto SDKSignal.
+// This is the reverse of FromProto and maps all 14 fields.
+func toProtoSignal(s Signal) *sdkv1.SDKSignal {
+	return &sdkv1.SDKSignal{
+		SignalId:       s.SignalID,
+		TraceId:        s.TraceID,
+		SpanId:         s.SpanID,
+		ParentSpanId:   s.ParentSpanID,
+		Layer:          int32(s.Layer),
+		Category:       s.Category,
+		Severity:       int32(s.Severity),
+		Timestamp:      timestamppb.New(s.Timestamp),
+		DurationMs:     s.DurationMS,
+		ContextJson:    s.ContextJSON,
+		SessionId:      s.SessionID,
+		ConversationId: s.ConversationID,
+		UserId:         s.UserID,
+		AppVersion:     s.AppVersion,
+	}
+}
+
+// ToProto converts a Batch to a proto SignalBatch.
+// batchID is the ULID assigned by the caller (echoed in BatchAck.batch_id).
+// sdkVersion is the version of the SDK library producing this batch.
+func (b Batch) ToProto(batchID, sdkVersion string) *sdkv1.SignalBatch {
+	signals := make([]*sdkv1.SDKSignal, len(b.Signals))
+	for i, s := range b.Signals {
+		signals[i] = toProtoSignal(s)
+	}
+	return &sdkv1.SignalBatch{
+		BatchId:    batchID,
+		AppId:      b.AppID,
+		Env:        b.Env,
+		Signals:    signals,
+		SdkVersion: sdkVersion,
+	}
 }
