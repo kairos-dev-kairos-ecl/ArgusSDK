@@ -1,0 +1,143 @@
+// Package sdk.v1 defines the wire contract between Argus instrumentation
+// libraries (Python, TypeScript, Go) and the local argus-agent process.
+//
+// Transport options:
+//   - Unix domain socket: agent listens at a configurable path (e.g. /var/run/argus-agent.sock).
+//     Access is governed by OS file permissions (mode 0660); only the SDK process user or
+//     group needs read/write permission on the socket file.  This is the preferred path on
+//     Linux and macOS because round-trip latency is sub-millisecond.
+//   - TCP loopback (127.0.0.1:5002): used on all platforms, and is the only option on
+//     Windows because Unix domain sockets are not supported there.  The agent Start()
+//     method skips net.Listen("unix", ...) when runtime.GOOS == "windows".
+//
+// Auth model:
+//   - Unix socket path: OS file permissions (0660) only — no transport-layer cryptographic auth.
+//   - TCP loopback path: app_id in SignalBatch is validated against the agent app registry;
+//     an unknown app_id results in PERMISSION_DENIED.
+//   - Neither path uses TLS or token-based auth on the local SDK→agent hop.
+
+syntax = "proto3";
+
+package sdk.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/kairos-dev-kairos-ecl/ArgusSDK/gen/go/sdk/v1;sdkv1";
+
+// SDKIngestService is the gRPC service exposed by the argus-agent to local
+// instrumentation libraries.
+service SDKIngestService {
+  // IngestBatch submits a batch of signals to the argus-agent.
+  // Unary — blocks until agent accepts batch; context deadline enforces the <5ms budget.
+  rpc IngestBatch(SignalBatch) returns (BatchAck);
+}
+
+// SignalBatch groups signals from one application instance into a single
+// network round-trip.  All signals in the batch share the same app_id and env.
+message SignalBatch {
+  // ULID assigned by the SDK lib; echoed back verbatim in BatchAck.batch_id.
+  string batch_id = 1;
+
+  // Identifies the emitting application; validated against the agent app registry.
+  // An unknown value causes the entire batch to be rejected with PERMISSION_DENIED.
+  string app_id = 2;
+
+  // Deployment environment: "dev" | "staging" | "prod".
+  string env = 3;
+
+  // Signal payloads.  The recommended maximum is 500 signals per batch to keep
+  // serialisation latency within the <5ms budget.
+  repeated SDKSignal signals = 4;
+
+  // Version of the Argus SDK library that produced this batch.
+  string sdk_version = 5;
+}
+
+// SDKSignal is a single observable event emitted by an instrumentation library.
+// Field numbers 1–14 are LOCKED (SPEC-3); do not renumber or reorder.
+message SDKSignal {
+  // Identity
+
+  // ULID assigned by the emitting library; globally unique across all signals.
+  string signal_id = 1;
+
+  // OpenTelemetry-compatible trace identifier (hex string or ULID).
+  string trace_id = 2;
+
+  // OpenTelemetry-compatible span identifier.
+  string span_id = 3;
+
+  // Parent span identifier; empty when this is the root span of a trace.
+  string parent_span_id = 4;
+
+  // Classification — numeric values match argus.v1 enums (zero-cost int32 cast)
+
+  // LLM system layer that produced the signal.
+  // Valid range: 1 (L1_HARDWARE) … 10 (L10_APPLICATION), 11 (L_DECISION).
+  // Zero (unspecified) is rejected by the agent.
+  int32 layer = 5;
+
+  // Category tag within the layer, e.g. "retrieval.search" or "agent.tool_call".
+  string category = 6;
+
+  // Severity of the signal.
+  // Valid range: 1 (INFO) … 5 (CRITICAL).  Zero (unspecified) is rejected.
+  int32 severity = 7;
+
+  // Temporal
+
+  // Wall-clock time when the event was observed by the instrumentation library.
+  google.protobuf.Timestamp timestamp = 8;
+
+  // Duration of the observed operation in milliseconds.  Zero if not applicable.
+  float duration_ms = 9;
+
+  // Layer-specific payload — JSON bytes; agent validates structure per declared layer
+
+  // JSON-encoded layer context blob.  The agent validates the structure against the
+  // declared layer; libs that pre-encode context avoid repeated serialisation on the
+  // hot path.
+  bytes context_json = 10;
+
+  // Relationship
+
+  // Session identifier scoping a user or application session.
+  string session_id = 11;
+
+  // Conversation identifier within a session.
+  string conversation_id = 12;
+
+  // Hashed user identifier.  The SDK lib MUST hash this value before sending;
+  // the agent does not perform additional hashing.
+  string user_id = 13;
+
+  // Source (app_id + env come from SignalBatch)
+
+  // Version of the application that emitted this signal.
+  string app_version = 14;
+}
+
+// BatchAck is the agent's acknowledgement for a received SignalBatch.
+message BatchAck {
+  // Echoes SignalBatch.batch_id so the SDK lib can correlate responses.
+  string batch_id = 1;
+
+  // Number of signals from the batch that the agent accepted for processing.
+  int32 accepted_count = 2;
+
+  // Number of signals from the batch that the agent rejected.
+  int32 rejected_count = 3;
+
+  // Per-signal rejection details.  Present only when rejected_count > 0.
+  repeated RejectionDetail rejections = 4;
+}
+
+// RejectionDetail describes why a single signal was rejected by the agent.
+message RejectionDetail {
+  // Identifies the rejected signal.
+  string signal_id = 1;
+
+  // Human-readable rejection reason, e.g. "invalid layer: 0 (unspecified)",
+  // "context_json: invalid JSON".
+  string reason = 2;
+}
