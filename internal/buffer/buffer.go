@@ -9,13 +9,18 @@
 //     so a fleet of agents does not simultaneously hammer the ingest endpoint.
 //   - The WAL is append-only; committed entries are truncated after successful
 //     delivery acknowledgement.
-//   - File format: length-prefixed protobuf records (4-byte big-endian uint32 length
+//   - File format: length-prefixed gob records (4-byte big-endian uint32 length
 //     followed by serialised SignalBatch bytes). This allows streaming reads without
 //     loading the entire file into memory.
 package buffer
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
@@ -63,19 +68,18 @@ func DefaultConfig() Config {
 }
 
 // Buffer manages WAL-backed signal storage and drain-on-reconnect logic.
-//
-// Implementation TODO (not in this scaffold):
-//   - WAL writer: append length-prefixed proto records to the active segment file
-//   - WAL reader: stream records from the oldest unconfirmed segment
-//   - Segment rotation: create a new segment file when the active one exceeds a
-//     configured segment size (e.g. 32 MB) for bounded memory on read
-//   - Drain loop: on flush tick or health-change event, read oldest records and
-//     call Dispatcher.Enqueue; on DeliveryAck, truncate or delete the segment
-//   - Backoff: exponential with jitter (use resilience.TokenBucket to rate-limit
-//     drain bursts so reconnected agents do not overwhelm XDR)
-//   - Metrics: buffered_bytes_total, dropped_batches_total, drain_lag_seconds
 type Buffer struct {
 	cfg Config
+
+	segMu   sync.Mutex
+	seg     *walSegment
+	segPath string
+
+	closed atomic.Bool
+
+	countBatches atomic.Int64
+	countBytes   atomic.Int64
+	countDropped atomic.Int64
 }
 
 // New creates a Buffer. Call Start to begin the drain loop.
@@ -91,51 +95,156 @@ func New(cfg Config) *Buffer {
 
 // Write appends a batch to the WAL. Returns error only on unrecoverable I/O failure.
 // Write is safe for concurrent calls from multiple collector goroutines.
-func (b *Buffer) Write(_ *connector.SignalBatch) error {
-	// TODO: serialise batch, append length-prefixed record to active WAL segment
+func (b *Buffer) Write(batch *connector.SignalBatch) error {
+	if b.closed.Load() {
+		return fmt.Errorf("buffer is closed")
+	}
+
+	b.segMu.Lock()
+	if b.seg == nil {
+		if err := os.MkdirAll(b.cfg.Dir, 0700); err != nil {
+			b.segMu.Unlock()
+			return fmt.Errorf("buffer: create dir %s: %w", b.cfg.Dir, err)
+		}
+		p := segmentPath(b.cfg.Dir)
+		seg, err := openSegment(p)
+		if err != nil {
+			b.segMu.Unlock()
+			return fmt.Errorf("buffer: open segment: %w", err)
+		}
+		b.seg = seg
+		b.segPath = p
+	}
+	b.segMu.Unlock()
+
+	n, err := appendRecord(b.seg, batch)
+	if err != nil {
+		return fmt.Errorf("buffer: append record: %w", err)
+	}
+
+	// Rotate segment if over size limit.
+	b.segMu.Lock()
+	size, sizeErr := segmentSizeBytes(b.segPath)
+	if sizeErr == nil && size > int64(b.cfg.MaxSizeMB)*1024*1024 {
+		// Close old segment and open a fresh one.
+		if b.seg != nil {
+			_ = b.seg.file.Sync()
+			_ = b.seg.file.Close()
+			b.seg = nil
+		}
+		p := segmentPath(b.cfg.Dir)
+		seg, openErr := openSegment(p)
+		if openErr == nil {
+			b.seg = seg
+			b.segPath = p
+		}
+	}
+	b.segMu.Unlock()
+
+	b.countBatches.Add(1)
+	b.countBytes.Add(int64(n))
 	return nil
 }
 
 // Start begins the drain loop in a background goroutine.
 // The loop reads buffered batches and delivers them via the provided drain function.
-// drain is called with each batch; a nil error return triggers WAL truncation.
+// drain is called with each batch; a nil error return triggers WAL record marking.
 func (b *Buffer) Start(ctx context.Context, drain func(ctx context.Context, batch *connector.SignalBatch) error) {
 	go b.drainLoop(ctx, drain)
 }
 
 func (b *Buffer) drainLoop(ctx context.Context, drain func(context.Context, *connector.SignalBatch) error) {
-	_ = drain
 	ticker := time.NewTicker(b.cfg.FlushInterval)
 	defer ticker.Stop()
+	attempt := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// TODO: read oldest unconfirmed segments, call drain, truncate on success
+			_ = b.drainOnce(ctx, drain, &attempt)
 		}
 	}
 }
 
+// drainOnce streams all unconsumed records and calls drain on each.
+// On success, marks the record consumed and resets attempt.
+// On failure, applies exponential backoff.
+func (b *Buffer) drainOnce(ctx context.Context, drain func(context.Context, *connector.SignalBatch) error, attempt *int) error {
+	b.segMu.Lock()
+	path := b.segPath
+	b.segMu.Unlock()
+
+	if path == "" {
+		return nil
+	}
+
+	return streamRecords(path, func(offset int64, batch *connector.SignalBatch) error {
+		if err := drain(ctx, batch); err == nil {
+			_ = markConsumed(path, offset)
+			*attempt = 0
+			return nil
+		}
+		*attempt++
+		shift := *attempt
+		if shift > 20 {
+			shift = 20
+		}
+		wait := b.cfg.BackoffBase * (1 << shift)
+		if wait > b.cfg.BackoffMax {
+			wait = b.cfg.BackoffMax
+		}
+		if b.cfg.BackoffJitter > 0 {
+			wait += time.Duration(rand.Int63n(int64(b.cfg.BackoffJitter)))
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+		return fmt.Errorf("drain failed, backing off")
+	})
+}
+
 // Flush synchronously drains all buffered batches. Intended for graceful shutdown.
 func (b *Buffer) Flush(ctx context.Context, drain func(context.Context, *connector.SignalBatch) error) error {
-	_ = drain
-	// TODO: iterate all unconfirmed WAL records, call drain sequentially
-	return nil
+	attempt := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		b.segMu.Lock()
+		path := b.segPath
+		b.segMu.Unlock()
+		if path == "" {
+			return nil
+		}
+		err := b.drainOnce(ctx, drain, &attempt)
+		if err == nil {
+			return nil
+		}
+	}
 }
 
 // Close stops the drain loop and closes open file handles.
 func (b *Buffer) Close() error {
-	// TODO: close active segment file handle
+	b.closed.Store(true)
+	b.segMu.Lock()
+	defer b.segMu.Unlock()
+	if b.seg != nil {
+		_ = b.seg.file.Sync()
+		_ = b.seg.file.Close()
+		b.seg = nil
+	}
 	return nil
 }
 
 // Stats returns current buffer metrics for Prometheus exposure.
 func (b *Buffer) Stats() map[string]int64 {
-	// TODO: return actual counters from WAL state
 	return map[string]int64{
-		"buffered_batches": 0,
-		"buffered_bytes":   0,
-		"dropped_batches":  0,
+		"buffered_batches": b.countBatches.Load(),
+		"buffered_bytes":   b.countBytes.Load(),
+		"dropped_batches":  b.countDropped.Load(),
 	}
 }
