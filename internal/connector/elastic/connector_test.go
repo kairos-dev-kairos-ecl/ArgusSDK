@@ -4,11 +4,13 @@ package elastic_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +48,41 @@ func makeBatch(n int) *connector.SignalBatch {
 	}
 }
 
+// makeUnmappableBatch creates a SignalBatch where all signals will fail OCSF mapping.
+func makeUnmappableBatch(n int) *connector.SignalBatch {
+	sigs := make([]signal.Signal, n)
+	for i := range sigs {
+		sigs[i] = signal.Signal{
+			SignalID:  fmt.Sprintf("bad-%03d", i),
+			Layer:     signal.Layer(999), // unknown layer — OCSF mapper will reject
+			Category:  "unknown",
+			Severity:  signal.SeverityInfo,
+			AppID:     "test-app",
+			Timestamp: time.Now().UTC(),
+		}
+	}
+	return &connector.SignalBatch{
+		BatchID:    "batch-unmappable",
+		InstanceID: "instance-001",
+		Signals:    sigs,
+		UseOCSF:    true,
+	}
+}
+
+// clusterInfoResponse writes a standard cluster info JSON response.
+func clusterInfoOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+}
+
+// bulkSuccess writes a successful /_bulk response.
+func bulkSuccess(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"took":3,"errors":false,"items":[{"index":{"result":"created","status":201}}]}`))
+}
+
 // TestElasticConnector_Name asserts Name() returns "elastic".
 func TestElasticConnector_Name(t *testing.T) {
 	c := elastic.New(elastic.Config{
@@ -79,9 +116,7 @@ func TestElasticConnector_ConnectNoAPIKey(t *testing.T) {
 func TestElasticConnector_ConnectClusterInfo(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" && r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 			return
 		}
 		http.NotFound(w, r)
@@ -127,16 +162,12 @@ func TestElasticConnector_SendBulkFormat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_bulk":
 			capturedAuth = r.Header.Get("Authorization")
 			body, _ := io.ReadAll(r.Body)
 			capturedBody = body
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"took":3,"errors":false,"items":[{"index":{"result":"created","status":201}}]}`))
+			bulkSuccess(w)
 		default:
 			http.NotFound(w, r)
 		}
@@ -193,9 +224,7 @@ func TestElasticConnector_SendBulkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_bulk":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -230,13 +259,9 @@ func TestElasticConnector_SendBulkSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_bulk":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"took":3,"errors":false,"items":[{"index":{"result":"created","status":201}}]}`))
+			bulkSuccess(w)
 		default:
 			http.NotFound(w, r)
 		}
@@ -267,9 +292,7 @@ func TestElasticConnector_Health(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_cluster/health":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -299,9 +322,7 @@ func TestElasticConnector_HealthYellow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_cluster/health":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -331,9 +352,7 @@ func TestElasticConnector_HealthRed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_cluster/health":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -411,18 +430,14 @@ func TestElasticConnector_ECSMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"test","cluster_name":"argus-test","version":{"number":"8.13.0"}}`))
+			clusterInfoOK(w)
 		case "/_bulk":
 			body, _ := io.ReadAll(r.Body)
 			lines := strings.Split(strings.TrimSpace(string(body)), "\n")
 			if len(lines) >= 2 {
 				_ = json.Unmarshal([]byte(lines[1]), &capturedDoc)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"took":1,"errors":false,"items":[{"index":{"result":"created","status":201}}]}`))
+			bulkSuccess(w)
 		default:
 			http.NotFound(w, r)
 		}
@@ -450,5 +465,262 @@ func TestElasticConnector_ECSMapping(t *testing.T) {
 		if _, ok := capturedDoc[field]; !ok {
 			t.Errorf("expected ECS field %q not found in document; doc=%v", field, capturedDoc)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F6: failed=>error contract tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestSend_BulkErrorsImpliesError (F6): server returns errors:true; Send must
+// return failed ack AND non-nil error.
+func TestSend_BulkErrorsImpliesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"took":5,"errors":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint: srv.URL,
+		APIKey:   "id:key",
+		Index:    "argus-signals",
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeBatch(1))
+
+	// F6 contract: non-nil error required alongside failed ack
+	if err == nil {
+		t.Error("Send() with errors:true must return non-nil error (F6 contract)")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+}
+
+// TestSend_Non2xxImpliesError (F6): server returns 503; Send must return
+// non-nil error AND failed ack.
+func TestSend_Non2xxImpliesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`service unavailable`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint: srv.URL,
+		APIKey:   "id:key",
+		Index:    "argus-signals",
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeBatch(1))
+
+	if err == nil {
+		t.Error("Send() with HTTP 503 must return non-nil error (F6 contract)")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F7: chunking tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestSend_ChunksBatch (F7): MaxBatchDocs=2, 5 signals → exactly 3 POSTs to /_bulk;
+// total doc count (action+doc line pairs) across bodies == 5.
+func TestSend_ChunksBatch(t *testing.T) {
+	var postCount int32
+	var allBodies [][]byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			atomic.AddInt32(&postCount, 1)
+			body, _ := io.ReadAll(r.Body)
+			allBodies = append(allBodies, body)
+			bulkSuccess(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint:     srv.URL,
+		APIKey:       "id:key",
+		Index:        "argus-signals",
+		MaxBatchDocs: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeBatch(5))
+	if err != nil {
+		t.Fatalf("Send() unexpected error: %v", err)
+	}
+	if ack.Status != "delivered" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "delivered")
+	}
+
+	// Exactly ceil(5/2) = 3 POSTs
+	if got := atomic.LoadInt32(&postCount); got != 3 {
+		t.Errorf("POST count = %d, want 3", got)
+	}
+
+	// Count total action+doc pairs across all bodies
+	totalPairs := 0
+	for _, body := range allBodies {
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		nonEmpty := 0
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				nonEmpty++
+			}
+		}
+		// Each document contributes 2 lines: action + doc
+		totalPairs += nonEmpty / 2
+	}
+	if totalPairs != 5 {
+		t.Errorf("total doc pairs = %d, want 5", totalPairs)
+	}
+}
+
+// TestSend_ChunkFailureAborts (F7): MaxBatchDocs=2, 6 signals; chunk 2 returns
+// errors:true → exactly 2 POSTs only (third never sent), err != nil,
+// ack.Error identifies chunk 2 of 3.
+func TestSend_ChunkFailureAborts(t *testing.T) {
+	var postCount int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			n := atomic.AddInt32(&postCount, 1)
+			if n == 1 {
+				bulkSuccess(w)
+			} else {
+				// POST 2 and beyond: bulk errors
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"took":1,"errors":true}`))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint:     srv.URL,
+		APIKey:       "id:key",
+		Index:        "argus-signals",
+		MaxBatchDocs: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeBatch(6))
+
+	// Must return non-nil error (F6 contract on failed chunk)
+	if err == nil {
+		t.Error("Send() with chunk 2 failure must return non-nil error")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+
+	// Exactly 2 POSTs — chunk 3 was never sent
+	if got := atomic.LoadInt32(&postCount); got != 2 {
+		t.Errorf("POST count = %d, want 2 (abort on first failed chunk)", got)
+	}
+
+	// ack.Error must identify chunk 2 of 3
+	if !strings.Contains(ack.Error, "2") || !strings.Contains(ack.Error, "3") {
+		t.Errorf("ack.Error = %q, want reference to chunk 2 of 3", ack.Error)
+	}
+}
+
+// TestSend_AllUnmappableStillDelivered (regression): batch where every signal
+// fails OCSF mapping → ack delivered, err nil, zero POSTs.
+func TestSend_AllUnmappableStillDelivered(t *testing.T) {
+	var postCount int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			atomic.AddInt32(&postCount, 1)
+			bulkSuccess(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint:     srv.URL,
+		APIKey:       "id:key",
+		Index:        "argus-signals",
+		MaxBatchDocs: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeUnmappableBatch(4))
+
+	if err != nil {
+		t.Errorf("Send() with all-unmappable batch must return nil error, got: %v", err)
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "delivered" {
+		t.Errorf("ack.Status = %q, want %q (all-unmappable = empty payload = delivered)", ack.Status, "delivered")
+	}
+	if n := atomic.LoadInt32(&postCount); n != 0 {
+		t.Errorf("POST count = %d, want 0 (no /_bulk POSTs for empty payload)", n)
 	}
 }
