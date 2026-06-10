@@ -219,7 +219,8 @@ func TestElasticConnector_SendBulkFormat(t *testing.T) {
 	}
 }
 
-// TestElasticConnector_SendBulkError asserts DeliveryAck.Status=="failed" when errors:true.
+// TestElasticConnector_SendBulkError asserts DeliveryAck.Status=="failed" and
+// non-nil error when errors:true (F6 contract: failed ack implies non-nil error).
 func TestElasticConnector_SendBulkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -246,8 +247,12 @@ func TestElasticConnector_SendBulkError(t *testing.T) {
 	}
 
 	ack, err := c.Send(context.Background(), makeBatch(1))
-	if err != nil {
-		t.Fatalf("unexpected transport error: %v", err)
+	// F6 contract: errors:true must now produce non-nil error alongside failed ack.
+	if err == nil {
+		t.Fatal("Send() with errors:true must return non-nil error (F6 contract)")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
 	}
 	if ack.Status != "failed" {
 		t.Fatalf("expected Status=%q, got %q", "failed", ack.Status)

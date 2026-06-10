@@ -285,8 +285,10 @@ func TestSplunkConnector_SendSplunkError(t *testing.T) {
 
 	batch := newTestBatch()
 	ack, err := c.Send(context.Background(), batch)
-	// Send returns ack (not error) for HEC-level failures
-	_ = err
+	// F6 contract: HEC-level failures now return non-nil error alongside failed ack.
+	if err == nil {
+		t.Error("Send() with HEC code:4 must return non-nil error (F6 contract)")
+	}
 	if ack == nil {
 		t.Fatal("Send() returned nil DeliveryAck")
 	}

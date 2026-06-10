@@ -24,6 +24,7 @@ import (
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/ocsf"
+	"github.com/kairos-dev-kairos-ecl/ArgusSDK/pkg/signal"
 )
 
 // TLSConfig holds the TLS certificate parameters for the Elasticsearch connection.
@@ -179,47 +180,90 @@ func (c *Connector) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Send builds an NDJSON /_bulk payload from the signals in batch, posts it to
-// <Endpoint>/_bulk with API key authentication, and returns a DeliveryAck.
+// Send delivers the batch to Elasticsearch using ceil(n/limit) sequential /_bulk
+// requests (F7). Each chunk is a newline-delimited NDJSON payload.
 //
-// Each signal is converted to an OCSF Event via the mapper, then projected to
-// a flat ECS document with the following field mapping:
+// Locked delivery contract (F6, locked decision 3):
+//   - Any non-delivered outcome returns a non-nil error AND a failed ack.
+//   - Abort on the first failed chunk; remaining signals count as failed (F7, locked decision 4).
+//   - Signals that fail OCSF mapping are skipped; an entirely-unmappable batch
+//     returns Status="delivered" with no /_bulk POST (existing behaviour preserved).
 //
-//	@timestamp    ← time.UnixMilli(ev.Time).UTC().Format(time.RFC3339Nano)
-//	event.code    ← strconv.Itoa(int(ev.ClassUID))
-//	event.category ← []string{ev.CategoryName}
-//	event.kind    ← "event"
-//	event.severity ← severityIDToECSText(ev.SeverityID)
-//	agent.name    ← ev.Metadata.Product.VendorName
-//	event.module  ← ev.Metadata.Product.Name
-//	event.uid     ← ev.Metadata.UID
-//
-// Signals that fail OCSF mapping are skipped. An empty payload (all skipped)
-// returns Status="delivered". Returns Status="failed" if the bulk response
-// contains errors:true.
+// NOTE: The action line construction is intentionally kept as-is here. Plan 03-03
+// fixes F4 (NDJSON injection) by switching to json.Marshal for the action line.
+// Do not restructure the action line in this plan to avoid collision.
 func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*connector.DeliveryAck, error) {
 	if c.client == nil {
+		err := fmt.Errorf("elastic: Send called before Connect")
 		return &connector.DeliveryAck{
 			BatchID:   batch.BatchID,
 			Status:    "failed",
 			Error:     "connector not connected",
 			Timestamp: time.Now(),
-		}, fmt.Errorf("elastic: Send called before Connect")
+		}, err
 	}
 
-	limit := c.cfg.MaxBatchDocs
 	signals := batch.Signals
-	if limit > 0 && len(signals) > limit {
-		signals = signals[:limit]
+	limit := c.cfg.MaxBatchDocs
+
+	// Determine chunk size; limit <= 0 means one chunk containing all signals.
+	chunkSize := len(signals)
+	if limit > 0 && limit < chunkSize {
+		chunkSize = limit
 	}
 
+	// Calculate total number of chunks (ceil(n / chunkSize)).
+	total := 1
+	if chunkSize > 0 && len(signals) > 0 {
+		total = (len(signals) + chunkSize - 1) / chunkSize
+	}
+	if len(signals) == 0 {
+		total = 1
+	}
+
+	for i := 0; i < total; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(signals) {
+			end = len(signals)
+		}
+		chunk := signals[start:end]
+
+		if err := c.sendChunk(ctx, chunk); err != nil {
+			detail := fmt.Sprintf("chunk %d/%d: %v", i+1, total, err)
+			return &connector.DeliveryAck{
+				BatchID:   batch.BatchID,
+				Status:    "failed",
+				Error:     detail,
+				Timestamp: time.Now(),
+			}, fmt.Errorf("elastic: %s", detail)
+		}
+	}
+
+	return &connector.DeliveryAck{
+		BatchID:   batch.BatchID,
+		Status:    "delivered",
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// sendChunk builds and POSTs a single /_bulk NDJSON payload for the given signals.
+// It returns nil only when the HTTP status is 2xx AND bulkResp.Errors == false.
+// Every failure path returns a descriptive non-nil error (F6 contract).
+// Signals that fail OCSF mapping are skipped; if all signals are unmappable
+// the chunk is empty and no POST is issued (returns nil — not a failure).
+//
+// NOTE: The action line uses string concatenation of cfg.Index (existing behaviour).
+// Plan 03-03 will replace this with json.Marshal to close F4 (NDJSON injection).
+// Do not modify the action line construction here.
+func (c *Connector) sendChunk(ctx context.Context, signals []signal.Signal) error {
 	var buf bytes.Buffer
 	actionLine := []byte(`{"index":{"_index":"` + c.cfg.Index + `"}}` + "\n")
 
 	for _, s := range signals {
 		ev, err := c.mapper.Map(s)
 		if err != nil {
-			// Skip unmappable signals; do not fail the whole batch.
+			// Skip unmappable signals; do not fail the whole chunk.
 			continue
 		}
 
@@ -235,23 +279,14 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 	}
 
 	if buf.Len() == 0 {
-		// All signals were unmappable — return delivered for an empty payload.
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "delivered",
-			Timestamp: time.Now(),
-		}, nil
+		// All signals in this chunk were unmappable — skip the POST.
+		return nil
 	}
 
 	url := c.cfg.Endpoint + "/_bulk"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     err.Error(),
-			Timestamp: time.Now(),
-		}, fmt.Errorf("elastic: building /_bulk request: %w", err)
+		return fmt.Errorf("building /_bulk request: %w", err)
 	}
 	req.Header.Set("Authorization", c.apiKeyHeader)
 	req.Header.Set("Content-Type", "application/x-ndjson")
@@ -259,58 +294,30 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     err.Error(),
-			Timestamp: time.Now(),
-		}, fmt.Errorf("elastic: posting to /_bulk: %w", err)
+		return fmt.Errorf("posting to /_bulk: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("reading /_bulk response: %v", err),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("reading /_bulk response: %w", err)
 	}
 
+	// Explicit non-2xx HTTP status check (F6: was missing for body-read path before).
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("/_bulk returned status %d: %s", resp.StatusCode, string(bodyBytes)),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("/_bulk returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var bulkResp bulkResponse
 	if err := json.Unmarshal(bodyBytes, &bulkResp); err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("elastic: unparseable /_bulk response: %s", string(bodyBytes)),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("unparseable /_bulk response: %s", string(bodyBytes))
 	}
 
 	if bulkResp.Errors {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     "elastic: /_bulk response contains errors",
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("/_bulk response contains errors")
 	}
 
-	return &connector.DeliveryAck{
-		BatchID:   batch.BatchID,
-		Status:    "delivered",
-		Timestamp: time.Now(),
-	}, nil
+	return nil
 }
 
 // Health issues GET <Endpoint>/_cluster/health and returns nil when the cluster
