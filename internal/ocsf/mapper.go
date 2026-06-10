@@ -284,12 +284,20 @@ func (m *Mapper) Map(s signal.Signal) (*Event, error) {
 		severityID = 1 // default to Informational
 	}
 
+	// F13 / T-03-18: OCSF validators may reject activity_id=99 without a name.
+	// Set ActivityName="Other" when activity_id==99 (per OCSF spec for "Other" activities).
+	activityName := ""
+	if activityID == 99 {
+		activityName = "Other"
+	}
+
 	ev := &Event{
 		ClassUID:     classUID,
 		ClassName:    meta.className,
 		CategoryUID:  meta.categoryUID,
 		CategoryName: meta.categoryName,
 		ActivityID:   activityID,
+		ActivityName: activityName,
 		TypeUID:      int(classUID)*100 + activityID, // required: class_uid*100 + activity_id
 		Time:         s.Timestamp.UnixMilli(),
 		SeverityID:   severityID,
@@ -300,7 +308,10 @@ func (m *Mapper) Map(s signal.Signal) (*Event, error) {
 				Name:       "Argus SDK",
 				Version:    m.productVersion,
 			},
-			UID:        s.SignalID,
+			UID: s.SignalID,
+			// NOTE(F17): time.Now() makes Map non-deterministic for golden tests.
+			// Accepted/deferred 2026-06-10 review — clock injection is an API change
+			// touching all connectors. See locked decision 5 in 03-03-SUMMARY.md.
 			LoggedTime: time.Now().UTC(),
 		},
 		Actor: &Actor{
