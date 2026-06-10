@@ -21,6 +21,7 @@ import (
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/ocsf"
+	"github.com/kairos-dev-kairos-ecl/ArgusSDK/pkg/signal"
 )
 
 // Config holds HEC connection parameters.
@@ -145,37 +146,80 @@ func (c *Connector) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Send builds a newline-delimited HEC payload (one JSON object per signal),
-// POSTs it to <Endpoint>/services/collector/event with the Authorization header,
-// and returns a DeliveryAck indicating success or failure.
+// Send delivers the batch to Splunk HEC using ceil(n/limit) sequential chunk
+// requests (F7). Each chunk is a newline-delimited NDJSON HEC payload.
 //
-// Each HEC record has the structure:
-//
-//	{"event":<ocsf_json>,"time":<unix_float>,"index":"<index>","sourcetype":"<sourcetype>"}
-//
-// Signals that fail OCSF mapping are skipped. Returns DeliveryAck{Status:"failed"}
-// if Splunk returns a non-zero code in the response body.
+// Locked delivery contract (F6, locked decision 3):
+//   - Any non-delivered outcome returns a non-nil error AND a failed ack.
+//   - Abort on the first failed chunk; remaining signals count as failed (F7, locked decision 4).
+//   - Signals that fail OCSF mapping are skipped; an entirely-unmappable batch
+//     returns Status="delivered" with no HEC POST (existing behaviour preserved).
 func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*connector.DeliveryAck, error) {
 	if c.client == nil {
+		err := fmt.Errorf("splunk_hec: Send called before Connect")
 		return &connector.DeliveryAck{
 			BatchID:   batch.BatchID,
 			Status:    "failed",
 			Error:     "connector not connected",
 			Timestamp: time.Now(),
-		}, fmt.Errorf("splunk_hec: Send called before Connect")
+		}, err
 	}
 
-	limit := c.cfg.MaxBatchEvents
 	signals := batch.Signals
-	if limit > 0 && len(signals) > limit {
-		signals = signals[:limit]
+	limit := c.cfg.MaxBatchEvents
+
+	// Determine chunk size; limit <= 0 means one chunk containing all signals.
+	chunkSize := len(signals)
+	if limit > 0 && limit < chunkSize {
+		chunkSize = limit
 	}
 
+	// Calculate total number of chunks (ceil(n / chunkSize)).
+	total := 1
+	if chunkSize > 0 && len(signals) > 0 {
+		total = (len(signals) + chunkSize - 1) / chunkSize
+	}
+	if len(signals) == 0 {
+		total = 1
+	}
+
+	for i := 0; i < total; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(signals) {
+			end = len(signals)
+		}
+		chunk := signals[start:end]
+
+		if err := c.sendChunk(ctx, batch.BatchID, chunk, i+1, total); err != nil {
+			detail := fmt.Sprintf("chunk %d/%d: %v", i+1, total, err)
+			return &connector.DeliveryAck{
+				BatchID:   batch.BatchID,
+				Status:    "failed",
+				Error:     detail,
+				Timestamp: time.Now(),
+			}, fmt.Errorf("splunk_hec: %s", detail)
+		}
+	}
+
+	return &connector.DeliveryAck{
+		BatchID:   batch.BatchID,
+		Status:    "delivered",
+		Timestamp: time.Now(),
+	}, nil
+}
+
+// sendChunk builds and POSTs a single NDJSON HEC payload for the given signals.
+// It returns nil only when the HTTP status is 2xx AND hecResp.Code == 0.
+// Every failure path returns a descriptive non-nil error (F6 contract).
+// Signals that fail OCSF mapping are skipped; if all signals are unmappable
+// the chunk is empty and no POST is issued (returns nil — not a failure).
+func (c *Connector) sendChunk(ctx context.Context, batchID string, signals []signal.Signal, chunkNum, total int) error {
 	var buf bytes.Buffer
 	for _, s := range signals {
 		ev, err := c.mapper.Map(s)
 		if err != nil {
-			// Skip unmappable signals; do not fail the whole batch.
+			// Skip unmappable signals; do not fail the whole chunk.
 			continue
 		}
 
@@ -208,23 +252,14 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 	}
 
 	if buf.Len() == 0 {
-		// All signals were unmappable — return delivered for an empty payload.
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "delivered",
-			Timestamp: time.Now(),
-		}, nil
+		// All signals in this chunk were unmappable — skip the POST.
+		return nil
 	}
 
 	url := c.cfg.Endpoint + "/services/collector/event"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     err.Error(),
-			Timestamp: time.Now(),
-		}, fmt.Errorf("splunk_hec: building request: %w", err)
+		return fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("Authorization", "Splunk "+c.cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
@@ -234,50 +269,30 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     err.Error(),
-			Timestamp: time.Now(),
-		}, fmt.Errorf("splunk_hec: posting to HEC: %w", err)
+		return fmt.Errorf("posting to HEC: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("reading HEC response: %v", err),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("reading HEC response: %w", err)
+	}
+
+	// Explicit non-2xx HTTP status check (F6: was missing before).
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HEC returned HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var hecResp hecResponse
 	if err := json.Unmarshal(bodyBytes, &hecResp); err != nil {
-		// Treat unparseable response as failure.
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("splunk_hec: unparseable response: %s", string(bodyBytes)),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("unparseable HEC response: %s", string(bodyBytes))
 	}
 
 	if hecResp.Code != 0 {
-		return &connector.DeliveryAck{
-			BatchID:   batch.BatchID,
-			Status:    "failed",
-			Error:     fmt.Sprintf("splunk_hec: %s (code:%d)", hecResp.Text, hecResp.Code),
-			Timestamp: time.Now(),
-		}, nil
+		return fmt.Errorf("%s (code:%d)", hecResp.Text, hecResp.Code)
 	}
 
-	return &connector.DeliveryAck{
-		BatchID:   batch.BatchID,
-		Status:    "delivered",
-		Timestamp: time.Now(),
-	}, nil
+	return nil
 }
 
 // Health calls GET <Endpoint>/services/collector/health and returns nil on 200.
