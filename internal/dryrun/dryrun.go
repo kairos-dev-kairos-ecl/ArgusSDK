@@ -141,27 +141,35 @@ func Run(cfg Config) (*Report, error) {
 		}
 	}
 
-	// Stage 2+3: OCSF mapping then structural + schema validation
-	events, mapErrs := mapper.MapBatch(signals)
-	for i, mapErr := range mapErrs {
-		if mapErr != nil {
+	// Stage 2+3: OCSF mapping then structural + schema validation.
+	// Build a nil-padded parallel events slice (one entry per signal, nil at
+	// every failed index) so all downstream index arithmetic stays correct (F8).
+	// mapper.MapBatch compacts both return slices — using it here would shift
+	// indexes and attribute errors to the wrong signals.
+	events := make([]*ocsf.Event, len(signals))
+	mapFailSet := make(map[int]bool, len(signals))
+	for i, s := range signals {
+		ev, err := mapper.Map(s)
+		if err != nil {
 			report.Errors = append(report.Errors, ValidationError{
-				Index:   i,
-				SignalID: signalID(signals, i),
-				Stage:   "ocsf_schema",
-				Field:   "mapper",
-				Message: mapErr.Error(),
+				Index:    i,
+				SignalID: signals[i].SignalID,
+				Stage:    "ocsf_schema",
+				Field:    "mapper",
+				Message:  err.Error(),
 			})
+			mapFailSet[i] = true
+			// events[i] remains nil
+			continue
 		}
+		events[i] = ev
 	}
 	ocsfErrs := validateOCSFBatch(events, signals)
 	report.Errors = append(report.Errors, ocsfErrs...)
 	ocsfFailSet := indexSet(ocsfErrs)
-	// also mark mapper-error signals as failed
-	for i, me := range mapErrs {
-		if me != nil {
-			ocsfFailSet[i] = true
-		}
+	// also mark mapper-error signals as failed so OCSFValid is exact
+	for i := range mapFailSet {
+		ocsfFailSet[i] = true
 	}
 	for i, ev := range events {
 		if ev != nil && !ocsfFailSet[i] {
