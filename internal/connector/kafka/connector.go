@@ -44,8 +44,11 @@ type Config struct {
 	// CompressionCodec is "none" | "gzip" | "snappy" | "lz4" | "zstd". Default: "snappy".
 	CompressionCodec string
 
-	// RequiredAcks controls producer durability: 0=none, 1=leader, -1=all. Default: 1.
-	RequiredAcks int
+	// RequiredAcks controls producer durability.
+	// nil = default (leader ack, equivalent to 1); *0 = no ack (NoAck); *1 = leader ack; *-1 = all ISR acks.
+	// Using a pointer distinguishes "user explicitly set 0 (NoAck)" from "user omitted the field (default 1)".
+	// YAML/mapstructure: absent key decodes to nil; required_acks: 0 decodes to a non-nil *int with value 0.
+	RequiredAcks *int
 }
 
 // TLSConfig controls TLS for Kafka.
@@ -73,13 +76,20 @@ type Connector struct {
 	mapper *ocsf.Mapper
 }
 
+// Cfg returns a copy of the stored configuration. Intended for white-box tests only.
+func (c *Connector) Cfg() Config { return c.cfg }
+
 // New creates a Kafka connector. Call Connect before sending.
 func New(cfg Config) *Connector {
 	if cfg.CompressionCodec == "" {
 		cfg.CompressionCodec = "snappy"
 	}
-	if cfg.RequiredAcks == 0 {
-		cfg.RequiredAcks = 1
+	// F12 / T-03-17: use pointer semantics so that an explicit 0 (NoAck) is not
+	// silently defaulted to 1 (leader ack). nil means "user did not set RequiredAcks"
+	// and defaults to 1; *0 means "user explicitly wants NoAck" and is preserved.
+	if cfg.RequiredAcks == nil {
+		one := 1
+		cfg.RequiredAcks = &one
 	}
 	if cfg.MaxBatchBytes == 0 {
 		cfg.MaxBatchBytes = 1 << 20 // 1 MB
@@ -113,7 +123,8 @@ func (c *Connector) Connect(_ context.Context) error {
 	}
 
 	// Map RequiredAcks integer to franz-go Acks type.
-	switch c.cfg.RequiredAcks {
+	// cfg.RequiredAcks is guaranteed non-nil after New() (nil defaults to *1).
+	switch *c.cfg.RequiredAcks {
 	case -1:
 		opts = append(opts, kgo.RequiredAcks(kgo.AllISRAcks()))
 	case 0:
