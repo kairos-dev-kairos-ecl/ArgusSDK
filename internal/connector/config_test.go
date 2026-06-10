@@ -411,8 +411,8 @@ func TestWatcher_MalformedYAMLKeepsPrevious(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
-	// Write malformed YAML — onChange must NOT fire.
-	if err := os.WriteFile(targetPath, []byte(":::invalid yaml:::"), 0o600); err != nil {
+	// Write malformed YAML (unclosed brace — genuinely invalid) — onChange must NOT fire.
+	if err := os.WriteFile(targetPath, []byte("connectors:\n  - {invalid"), 0o600); err != nil {
 		t.Fatalf("write malformed: %v", err)
 	}
 	time.Sleep(300 * time.Millisecond)
