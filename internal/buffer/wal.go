@@ -1,11 +1,29 @@
 // Package buffer WAL segment I/O implementation.
-// Records are length-prefixed gob-encoded connector.SignalBatch values.
-// File format per record:
 //
-//	[4-byte big-endian uint32 length][gob bytes]
+// # Record format
 //
-// A record is marked consumed by overwriting its first byte with 0xFF.
-// streamRecords skips any record whose first byte is 0xFF.
+// Each record in a WAL segment file is laid out as:
+//
+//	[1-byte status][4-byte big-endian uint32 length][gob-encoded SignalBatch]
+//
+// Status values:
+//   - 0x00 — live (not yet delivered)
+//   - 0xFF — consumed (successfully delivered; will be skipped on read)
+//
+// markConsumed writes ONLY the status byte (offset = record start).
+// The 4-byte length field is always preserved intact, so the skip path in
+// streamRecords never needs to reconstruct the length from partial bytes.
+// This fixes F1: with the old 4-byte-only header, overwriting byte 0 with 0xFF
+// corrupted payloads >= 16 MB (top length byte was assumed to be 0x00).
+//
+// # Segment naming
+//
+// Files are named wal-<unix>-<seq>.seg where:
+//   - <unix> is the Unix timestamp at creation time (seconds).
+//   - <seq>  is a monotonically increasing counter scoped to the process lifetime.
+//
+// The (unix, seq) pair sorts segments oldest-first even if two are created within
+// the same second, fixing the name-collision bug in the old "wal-<unix>.seg" scheme.
 package buffer
 
 import (
@@ -16,11 +34,25 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
 )
+
+// Record format constants.
+const (
+	statusLive     byte = 0x00
+	statusConsumed byte = 0xFF
+	headerSize          = 5 // 1 status + 4 length
+)
+
+// segSeq is a process-lifetime monotonically increasing counter for segment naming.
+var segSeq atomic.Uint64
 
 // walSegment represents an open WAL segment file.
 type walSegment struct {
@@ -38,8 +70,9 @@ func openSegment(path string) (*walSegment, error) {
 	return &walSegment{path: path, file: f}, nil
 }
 
-// appendRecord gob-encodes batch and appends a length-prefixed record to seg.
-// Returns the total number of bytes written (4-byte header + payload).
+// appendRecord gob-encodes batch and appends a record to seg.
+// Record format: [status:0x00][4-byte BE uint32 length][gob payload].
+// Returns the total number of bytes written (5-byte header + payload).
 func appendRecord(seg *walSegment, batch *connector.SignalBatch) (int, error) {
 	seg.mu.Lock()
 	defer seg.mu.Unlock()
@@ -53,8 +86,9 @@ func appendRecord(seg *walSegment, batch *connector.SignalBatch) (int, error) {
 	payload := buf.Bytes()
 	length := uint32(len(payload))
 
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], length)
+	var hdr [headerSize]byte
+	hdr[0] = statusLive
+	binary.BigEndian.PutUint32(hdr[1:], length)
 
 	n1, err := seg.file.Write(hdr[:])
 	if err != nil {
@@ -73,9 +107,11 @@ func appendRecord(seg *walSegment, batch *connector.SignalBatch) (int, error) {
 	return n1 + n2, nil
 }
 
-// streamRecords opens the segment at path and calls fn for each unconsumed record.
-// currentOffset (passed to fn) is the file offset of the start of the 4-byte header.
+// streamRecords opens the segment at path and calls fn for each live (unconsumed) record.
+// The offset passed to fn is the file offset of the start of the record's 5-byte header.
+// Consumed records (status 0xFF) are skipped using the intact 4-byte length field.
 // Stops and returns fn's error if fn returns non-nil.
+// The file handle is always closed before this function returns.
 func streamRecords(path string, fn func(offset int64, batch *connector.SignalBatch) error) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -90,7 +126,7 @@ func streamRecords(path string, fn func(offset int64, batch *connector.SignalBat
 	for {
 		recordStart := offset
 
-		var hdr [4]byte
+		var hdr [headerSize]byte
 		_, err := io.ReadFull(f, hdr[:])
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			break
@@ -98,25 +134,13 @@ func streamRecords(path string, fn func(offset int64, batch *connector.SignalBat
 		if err != nil {
 			return fmt.Errorf("streamRecords read header at %d: %w", offset, err)
 		}
-		offset += 4
+		offset += headerSize
 
-		// Consumed records have 0xFF as the first byte of the header.
-		if hdr[0] == 0xFF {
-			// Reconstruct real length from remaining 3 bytes (upper byte was 0xFF, not the actual top byte).
-			// But we wrote 0xFF only over the first byte — we need to read the length from the original record.
-			// Since we overwrite only byte 0 of the header with 0xFF, we cannot reconstruct the original length.
-			// Instead we need the actual length so we can skip the payload.
-			// The original first byte of the uint32 big-endian length is now 0xFF, but that gives us
-			// an inflated length. We take a different approach: store the real length before we stomp.
-			//
-			// Re-reading the design: markConsumed overwrites the FIRST BYTE of the 4-byte header with 0xFF.
-			// On read, when hdr[0]==0xFF we must determine the payload length to advance the file pointer.
-			// However we only have 3 bytes of the original length. For safety we reconstruct assuming
-			// hdr[0] was originally 0x00 (payload < 16MB — safe for our use case).
-			// Reconstruct length treating hdr[0] as 0:
-			length := uint32(hdr[1])<<16 | uint32(hdr[2])<<8 | uint32(hdr[3])
-			// If length somehow looks wrong (e.g. first byte was not 0), scan forward is unreliable.
-			// We accept at-least-once delivery; skip and advance.
+		status := hdr[0]
+		length := binary.BigEndian.Uint32(hdr[1:])
+
+		if status == statusConsumed {
+			// Skip payload using the intact 4-byte length (F1 fix: no reconstruction).
 			if _, err := f.Seek(int64(length), io.SeekCurrent); err != nil {
 				break
 			}
@@ -124,7 +148,6 @@ func streamRecords(path string, fn func(offset int64, batch *connector.SignalBat
 			continue
 		}
 
-		length := binary.BigEndian.Uint32(hdr[:])
 		if length == 0 {
 			continue
 		}
@@ -149,7 +172,42 @@ func streamRecords(path string, fn func(offset int64, batch *connector.SignalBat
 	return nil
 }
 
-// markConsumed overwrites the first byte of the record header at the given file offset with 0xFF.
+// countLiveRecords returns the number of unconsumed records in the segment at path.
+// The file handle is closed before this function returns.
+func countLiveRecords(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("countLiveRecords open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	count := 0
+	for {
+		var hdr [headerSize]byte
+		_, err := io.ReadFull(f, hdr[:])
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		status := hdr[0]
+		length := binary.BigEndian.Uint32(hdr[1:])
+		if _, err := f.Seek(int64(length), io.SeekCurrent); err != nil {
+			break
+		}
+		if status == statusLive {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// markConsumed writes the single status byte 0xFF at the record's file offset.
+// It never touches the length bytes (bytes 1..4 of the header).
 func markConsumed(path string, offset int64) error {
 	f, err := os.OpenFile(path, os.O_RDWR, 0600)
 	if err != nil {
@@ -157,19 +215,85 @@ func markConsumed(path string, offset int64) error {
 	}
 	defer f.Close()
 
+	return markConsumedAt(f, offset)
+}
+
+// markConsumedAt writes 0xFF at offset using an already-open file handle.
+// It never touches the length bytes (bytes 1..4 of the header).
+// Does NOT sync — caller is responsible for flushing if durability is needed.
+func markConsumedAt(f *os.File, offset int64) error {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return fmt.Errorf("markConsumed seek to %d: %w", offset, err)
 	}
 
-	if _, err := f.Write([]byte{0xFF}); err != nil {
+	if _, err := f.Write([]byte{statusConsumed}); err != nil {
 		return fmt.Errorf("markConsumed write 0xFF: %w", err)
 	}
-	return f.Sync()
+	return nil
 }
 
 // segmentPath returns a new unique segment file path inside dir.
+// Format: wal-<unix>-<seq>.seg — never collides even within the same second.
 func segmentPath(dir string) string {
-	return filepath.Join(dir, fmt.Sprintf("wal-%d.seg", time.Now().Unix()))
+	seq := segSeq.Add(1)
+	return filepath.Join(dir, fmt.Sprintf("wal-%d-%d.seg", time.Now().Unix(), seq))
+}
+
+// segmentRef holds a parsed segment reference returned by listSegments.
+type segmentRef struct {
+	path    string
+	unixSec int64
+	seq     uint64
+}
+
+// parseSegmentName parses a filename of the form "wal-<unix>-<seq>.seg".
+// Returns (unix, seq, true) on success, (0, 0, false) if the name does not match.
+func parseSegmentName(name string) (unixSec int64, seq uint64, ok bool) {
+	// Expected: wal-<digits>-<digits>.seg
+	if !strings.HasPrefix(name, "wal-") || !strings.HasSuffix(name, ".seg") {
+		return 0, 0, false
+	}
+	inner := name[4 : len(name)-4] // strip "wal-" prefix and ".seg" suffix
+	idx := strings.LastIndex(inner, "-")
+	if idx < 0 {
+		return 0, 0, false
+	}
+	unixStr := inner[:idx]
+	seqStr := inner[idx+1:]
+	u, err1 := strconv.ParseInt(unixStr, 10, 64)
+	s, err2 := strconv.ParseUint(seqStr, 10, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return u, s, true
+}
+
+// listSegments returns all valid wal-<unix>-<seq>.seg files in dir, sorted
+// oldest-first by (unixSec, seq) using numeric (not lexicographic) ordering.
+func listSegments(dir string) ([]segmentRef, error) {
+	entries, err := filepath.Glob(filepath.Join(dir, "wal-*.seg"))
+	if err != nil {
+		return nil, fmt.Errorf("listSegments glob: %w", err)
+	}
+
+	var refs []segmentRef
+	for _, p := range entries {
+		name := filepath.Base(p)
+		u, s, ok := parseSegmentName(name)
+		if !ok {
+			continue
+		}
+		refs = append(refs, segmentRef{path: p, unixSec: u, seq: s})
+	}
+
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].unixSec != refs[j].unixSec {
+			return refs[i].unixSec < refs[j].unixSec
+		}
+		return refs[i].seq < refs[j].seq
+	})
+
+	return refs, nil
 }
 
 // segmentSizeBytes returns the size of the file at path in bytes.
