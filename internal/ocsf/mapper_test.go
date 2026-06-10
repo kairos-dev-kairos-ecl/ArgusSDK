@@ -461,3 +461,40 @@ func TestMap_WebResources_ContextJSON_ResourceURL(t *testing.T) {
 		t.Errorf("Unmapped[web_resource_url] = %v, want %q", got, "/api/v1/users")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// F13: ActivityName=Other for activity_id=99 (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestMap_Activity99SetsActivityName (F13): a signal with layer L8Agents
+// (activity_id=99) must produce an Event with ActivityName=="Other".
+// A signal with a non-99 layer must produce ActivityName=="".
+func TestMap_Activity99SetsActivityName(t *testing.T) {
+	m := newTestMapper()
+
+	// L8Agents → activity_id=99 → ActivityName must be "Other"
+	s99 := newMinimalSignal(signal.L8Agents)
+	ev99, err := m.Map(s99)
+	if err != nil {
+		t.Fatalf("Map(L8Agents) error = %v", err)
+	}
+	if ev99.ActivityID != 99 {
+		t.Fatalf("ActivityID = %d, want 99 for L8Agents", ev99.ActivityID)
+	}
+	if ev99.ActivityName != "Other" {
+		t.Errorf("ActivityName = %q, want %q for activity_id=99 (F13)", ev99.ActivityName, "Other")
+	}
+
+	// A non-99 layer (L9APIGateway → activity_id=6) must have ActivityName==""
+	s6 := newMinimalSignal(signal.L9APIGateway)
+	ev6, err := m.Map(s6)
+	if err != nil {
+		t.Fatalf("Map(L9APIGateway) error = %v", err)
+	}
+	if ev6.ActivityID == 99 {
+		t.Skip("L9APIGateway unexpectedly maps to activity_id=99 — skip non-99 assertion")
+	}
+	if ev6.ActivityName != "" {
+		t.Errorf("ActivityName = %q, want %q for non-99 activity_id", ev6.ActivityName, "")
+	}
+}

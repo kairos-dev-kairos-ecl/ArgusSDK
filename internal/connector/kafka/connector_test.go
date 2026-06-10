@@ -227,6 +227,47 @@ func TestKafkaConnector_Close(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// F12: RequiredAcks *int tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// intPtr returns a pointer to the given int value.
+func intPtr(v int) *int { return &v }
+
+// TestNew_RequiredAcksNilDefaultsToLeader (F12): Config with nil RequiredAcks
+// (omitted) must default to leader ack (1) in the stored config after New().
+func TestNew_RequiredAcksNilDefaultsToLeader(t *testing.T) {
+	c := kafka.New(kafka.Config{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "test",
+		RequiredAcks: nil, // nil = use default
+	})
+	cfg := c.Cfg()
+	if cfg.RequiredAcks == nil {
+		t.Fatal("RequiredAcks must not be nil after New() (default should be set to *1)")
+	}
+	if *cfg.RequiredAcks != 1 {
+		t.Errorf("RequiredAcks = %d, want 1 (leader ack default)", *cfg.RequiredAcks)
+	}
+}
+
+// TestNew_RequiredAcksZeroMeansNoAck (F12): Config with explicit *0 (NoAck)
+// must NOT be defaulted to 1; the pointer must remain non-nil and equal to 0.
+func TestNew_RequiredAcksZeroMeansNoAck(t *testing.T) {
+	c := kafka.New(kafka.Config{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "test",
+		RequiredAcks: intPtr(0), // explicit NoAck
+	})
+	cfg := c.Cfg()
+	if cfg.RequiredAcks == nil {
+		t.Fatal("RequiredAcks must not be nil for explicitly-set 0 (NoAck)")
+	}
+	if *cfg.RequiredAcks != 0 {
+		t.Errorf("RequiredAcks = %d, want 0 (NoAck — must not be defaulted away)", *cfg.RequiredAcks)
+	}
+}
+
 // TestKafkaConnector_Integration runs a full end-to-end test against a real
 // Kafka/Redpanda broker. It is skipped when KAFKA_BROKERS env var is not set.
 func TestKafkaConnector_Integration(t *testing.T) {
@@ -242,7 +283,7 @@ func TestKafkaConnector_Integration(t *testing.T) {
 	c := kafka.New(kafka.Config{
 		Brokers:      strings.Split(brokers, ","),
 		Topic:        topic,
-		RequiredAcks: 1, // leader ack for integration test speed
+		RequiredAcks: intPtr(1), // leader ack for integration test speed
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
