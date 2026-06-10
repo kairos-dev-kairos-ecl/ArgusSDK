@@ -88,8 +88,8 @@ func TestDispatcher_CountersWired(t *testing.T) {
 	t.Errorf("Stats() after processing = %v, want accepted=1 delivered=1 failed=1", stats)
 }
 
-// TestDispatcher_AcceptedNotIncrementedOnFullQueue: QueueCapacity=1, fill the queue,
-// then a second Enqueue must fail and accepted must stay at 1.
+// TestDispatcher_AcceptedNotIncrementedOnFullQueue: fill a capacity-2 queue, then
+// a third Enqueue must fail and accepted must stay at 2 (not 3).
 func TestDispatcher_AcceptedNotIncrementedOnFullQueue(t *testing.T) {
 	logger := zap.NewNop()
 	reg := NewConnectorRegistry(logger)
@@ -100,9 +100,12 @@ func TestDispatcher_AcceptedNotIncrementedOnFullQueue(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
+	// WorkerCount=0 means no workers drain the queue — but Dispatcher requires at least 1.
+	// Use WorkerCount=1 with a blocking Send so the in-flight job occupies the worker
+	// and the remaining queue capacity fills up.
 	cfg := &DispatchConfig{
 		WorkerCount:     1,
-		QueueCapacity:   1,
+		QueueCapacity:   2,
 		SendTimeout:     10 * time.Second,
 		ShutdownTimeout: 5 * time.Second,
 	}
@@ -119,27 +122,32 @@ func TestDispatcher_AcceptedNotIncrementedOnFullQueue(t *testing.T) {
 		return &SignalBatch{BatchID: "b", Signals: []signal.Signal{{SignalID: "s"}}, ReceivedAt: time.Now()}
 	}
 
-	// First enqueue — must succeed.
+	// Enqueue job 1 — worker picks it up and blocks; accepted becomes 1.
 	if err := d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}}); err != nil {
-		t.Fatalf("first Enqueue failed unexpectedly: %v", err)
+		t.Fatalf("job1 Enqueue failed: %v", err)
 	}
 
-	// Wait until the worker dequeues the job and blocks in Send; then fill the queue.
+	// Wait for the worker to dequeue job 1 and block in Send.
 	time.Sleep(50 * time.Millisecond)
 
-	// Fill the queue (capacity == 1).
-	_ = d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}})
-
-	// Second attempt — queue is full, must fail.
-	err2 := d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}})
-	if err2 == nil {
-		t.Error("second Enqueue on full queue should return error, got nil")
+	// Fill the remaining queue (capacity=2; worker holds 1; 2 slots now free).
+	if err := d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}}); err != nil {
+		t.Fatalf("job2 Enqueue failed: %v", err)
+	}
+	if err := d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}}); err != nil {
+		t.Fatalf("job3 Enqueue failed: %v", err)
 	}
 
-	// accepted must be 1 (only the first successful enqueue).
+	// Queue is now full; this enqueue must fail.
+	errFull := d.Enqueue(&DispatchJob{Batch: batch(), Targets: []string{"blocker"}})
+	if errFull == nil {
+		t.Error("Enqueue on full queue should return error, got nil")
+	}
+
+	// accepted must be 3 (only the 3 successful enqueues); failed enqueue must not increment.
 	stats := d.Stats()
-	if stats["accepted"] != 1 {
-		t.Errorf("Stats()[accepted] = %d, want 1 (failed enqueues must not increment accepted)", stats["accepted"])
+	if stats["accepted"] != 3 {
+		t.Errorf("Stats()[accepted] = %d, want 3 (failed enqueue must not increment accepted)", stats["accepted"])
 	}
 }
 

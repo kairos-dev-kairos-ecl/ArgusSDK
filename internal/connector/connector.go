@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -231,9 +232,11 @@ func NewDispatcher(cfg *DispatchConfig, registry *ConnectorRegistry, logger *zap
 
 // Enqueue adds a batch delivery job to the queue.
 // Returns error if the queue is full or the Dispatcher is shutting down.
+// On successful enqueue, increments the accepted counter.
 func (d *Dispatcher) Enqueue(job *DispatchJob) error {
 	select {
 	case d.queue <- job:
+		atomic.AddUint64(&d.accepted, 1)
 		return nil
 	case <-d.ctx.Done():
 		return fmt.Errorf("dispatcher is shutting down")
@@ -280,7 +283,21 @@ func (d *Dispatcher) process(job *DispatchJob) {
 				zap.String("connector", name),
 				zap.String("batch_id", job.Batch.BatchID),
 				zap.Error(err))
+			atomic.AddUint64(&d.failed, 1)
+		} else {
+			atomic.AddUint64(&d.delivered, 1)
 		}
+	}
+}
+
+// Stats returns a snapshot of the Dispatcher's lock-free counters.
+// Keys: "accepted", "delivered", "failed", "dropped".
+func (d *Dispatcher) Stats() map[string]uint64 {
+	return map[string]uint64{
+		"accepted":  atomic.LoadUint64(&d.accepted),
+		"delivered": atomic.LoadUint64(&d.delivered),
+		"failed":    atomic.LoadUint64(&d.failed),
+		"dropped":   atomic.LoadUint64(&d.dropped),
 	}
 }
 
