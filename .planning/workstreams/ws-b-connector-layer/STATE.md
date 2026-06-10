@@ -4,26 +4,26 @@ milestone: v1.0
 milestone_name: connector-layer
 current_phase: 03
 current_plan: "03-04"
-status: in_progress
-stopped_at: "03-03 complete — injection fix (F4), APIKey zeroing (F16), watcher rename-survival (F9), circuit-breaker TOCTOU (F10), secrets cache (F11), 0600 temp (F15), Kafka RequiredAcks *int (F12), ActivityName (F13), F17 deferred"
-last_updated: "2026-06-10T11:12:37Z"
+status: complete
+stopped_at: "03-04 complete — F8 (dryrun per-signal Map loop, index alignment), full-module go test ./... + go vet ./... + go build ./... all pass (SC-12). Phase 3 review remediation complete — all 16 findings closed, F17 accepted/deferred."
+last_updated: "2026-06-10T11:19:27Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 10
-  completed_plans: 8
-  percent: 80
+  completed_plans: 10
+  percent: 100
 ---
 
 # WS-B Connector Layer — State
 
 ## Current Position
 
-Phase: 03 (review-remediation) — IN PROGRESS
-**Status:** 3/4 plans complete
+Phase: 03 (review-remediation) — COMPLETE
+**Status:** 4/4 plans complete — PHASE COMPLETE
 **Last Activity:** 2026-06-10
-**Last Activity Description:** 03-03 injection + infra fixes complete — F4 (json.Marshal action line), F16 (APIKey zeroing), F9 (watcher rename-survival + zap), F10 (circuit-breaker single-lock), F11 (secrets cache), F15 (0600 temp), F12 (Kafka RequiredAcks *int), F13 (ActivityName=Other), F17 (deferred/commented) all closed
+**Last Activity Description:** 03-04 dryrun alignment + phase-exit gate — F8 (per-signal Map loop, nil-padded events slice), TestRun_MapperErrorMidBatch_IndexAlignment passes, go test ./... all green, go vet ./... clean, go build ./... clean. All 16 findings closed; F17 accepted/deferred.
 
 ## Plans Completed
 
@@ -38,12 +38,11 @@ Phase: 03 (review-remediation) — IN PROGRESS
 | 03-01 | WAL/buffer hardening (F1,F2,F3,F5,F14) | 39da508 | done |
 | 03-02 | Delivery contract (F6,F7,dispatcher counters) | 39c0b22 | done |
 | 03-03 | Injection + infra fixes (F4,F9,F10,F11,F12,F13,F15,F16,F17) | 73bde20 | done |
+| 03-04 | dryrun index alignment + phase-exit gate (F8, SC-12) | 5b9578d | done |
 
 ## Plans Remaining
 
-| Plan | Name | Wave | Status |
-|------|------|------|--------|
-| 03-04 | dryrun alignment + full-suite race verification | 3 | planned |
+None — all plans complete.
 
 ## Decisions Made
 
@@ -70,9 +69,10 @@ Phase: 03 (review-remediation) — IN PROGRESS
 - F12: Config.RequiredAcks *int — nil=default(1), *0=NoAck; kgo.NoAck() now reachable
 - F13: Map() sets ActivityName="Other" when activityID==99
 - F17: accepted/deferred — NOTE comment at LoggedTime; no behavioral change (clock injection is API-breaking)
+- F8: per-signal mapper.Map loop in dryrun.Run — nil-padded events slice; MapBatch removed from dryrun call site; index correspondence maintained for error attribution and OCSFValid counts
 
 ## Session Continuity
 
-**Stopped At:** 03-03 complete — injection + infra fixes done; next: 03-04 dryrun alignment + race verification
+**Stopped At:** Phase 3 complete — all 4 plans done; all 16 findings closed; F17 accepted/deferred; full-module go test ./... + go vet ./... + go build ./... pass
 **Resume File:** phases/03-review-remediation/03-CONTEXT.md
 **Research:** phases/02-connector-layer/02-RESEARCH.md
