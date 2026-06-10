@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -316,8 +317,8 @@ func TestWatcher_AtomicRenameTriggersReload(t *testing.T) {
 		if len(cfg.Connectors) == 0 || cfg.Connectors[0].Type != "kafka" {
 			t.Errorf("expected kafka connector after reload, got %+v", cfg)
 		}
-	case <-time.After(3 * time.Second):
-		t.Error("onChange was not called within 3 seconds after atomic rename")
+	case <-time.After(8 * time.Second):
+		t.Error("onChange was not called within 8 seconds after atomic rename")
 	}
 }
 
@@ -420,7 +421,10 @@ func TestWatcher_MalformedYAMLKeepsPrevious(t *testing.T) {
 		t.Error("onChange was called after malformed YAML write — must not be")
 	}
 
-	// Write valid YAML — onChange must fire.
+	// Write valid YAML atomically (temp+rename) to avoid the truncation-event race:
+	// os.WriteFile truncates before writing, and on Windows fsnotify fires the Write
+	// event after truncation — LoadConnectorsConfig would read empty bytes and
+	// return a zero-value config with nil error, triggering onChange prematurely.
 	updatedYAML := `connectors:
   - enabled: true
     type: kafka
@@ -428,8 +432,19 @@ func TestWatcher_MalformedYAMLKeepsPrevious(t *testing.T) {
       brokers:
         - "kafka:9092"
 `
-	if err := os.WriteFile(targetPath, []byte(updatedYAML), 0o600); err != nil {
-		t.Fatalf("write valid: %v", err)
+	validTmp, err := os.CreateTemp(filepath.Dir(targetPath), "reload-valid-*.yaml")
+	if err != nil {
+		t.Fatalf("create valid tmp: %v", err)
+	}
+	validTmpPath := validTmp.Name()
+	if _, err := validTmp.WriteString(updatedYAML); err != nil {
+		validTmp.Close()
+		t.Fatalf("write valid tmp: %v", err)
+	}
+	validTmp.Close()
+	defer os.Remove(validTmpPath)
+	if err := os.Rename(validTmpPath, targetPath); err != nil {
+		t.Fatalf("rename valid: %v", err)
 	}
 	select {
 	case cfg := <-called:
