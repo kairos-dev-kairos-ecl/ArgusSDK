@@ -342,6 +342,100 @@ func TestRun_OCSFContent_L6DetectionFinding(t *testing.T) {
 	}
 }
 
+// TestRun_MapperErrorMidBatch_IndexAlignment verifies F8: when sig-b (middle
+// signal) fails OCSF mapping, the ValidationError must attribute SignalID "sig-b"
+// and Index 1, and OCSFValid must count only the two successful signals (sig-a, sig-c).
+// With the buggy MapBatch-based pipeline this test FAILS because compaction causes
+// the error to be attributed to sig-a (index 0) and OCSFValid is wrong.
+func TestRun_MapperErrorMidBatch_IndexAlignment(t *testing.T) {
+	// Layer 99 is outside 1..11 — proto validator will flag it AND mapper.Map will
+	// return an error (unknown layer).  ProtoValid is therefore 2 (sig-a + sig-c).
+	inDir := t.TempDir()
+	outDir := t.TempDir()
+
+	path := writeSignalsFile(t, []map[string]interface{}{
+		validSignalMap("sig-a", int(signal.L9APIGateway)), // index 0 — valid
+		{
+			"signal_id": "sig-b",
+			"layer":     99, // invalid — causes mapper.Map error
+			"severity":  3,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		},
+		validSignalMap("sig-c", int(signal.L9APIGateway)), // index 2 — valid
+	})
+	_ = inDir // outDir used below
+
+	report, err := dryrun.Run(dryrun.Config{
+		InputFile:           path,
+		OutputDir:           outDir,
+		MapperAgentHostname: "test-host",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Total must be 3
+	if report.Total != 3 {
+		t.Errorf("Total = %d, want 3", report.Total)
+	}
+
+	// ProtoValid: sig-b has layer=99 which also fails proto validation → 2 valid
+	if report.ProtoValid != 2 {
+		t.Errorf("ProtoValid = %d, want 2 (sig-a and sig-c only)", report.ProtoValid)
+	}
+
+	// OCSFValid must be 2 — only sig-a and sig-c produced valid OCSF events
+	if report.OCSFValid != 2 {
+		t.Errorf("OCSFValid = %d, want 2 (sig-a and sig-c only, not inflated by compaction)", report.OCSFValid)
+	}
+
+	// There must be exactly one mapper-level error entry (Stage="ocsf_schema", Field="mapper")
+	var mapperErrs []dryrun.ValidationError
+	for _, e := range report.Errors {
+		if e.Stage == "ocsf_schema" && e.Field == "mapper" {
+			mapperErrs = append(mapperErrs, e)
+		}
+	}
+	if len(mapperErrs) != 1 {
+		t.Fatalf("expected 1 mapper ValidationError, got %d: %v", len(mapperErrs), mapperErrs)
+	}
+
+	// The error must point at sig-b, not sig-a (the compaction-shifted neighbour)
+	me := mapperErrs[0]
+	if me.SignalID != "sig-b" {
+		t.Errorf("mapper error SignalID = %q, want %q (index misattribution bug F8)", me.SignalID, "sig-b")
+	}
+	if me.Index != 1 {
+		t.Errorf("mapper error Index = %d, want 1 (index misattribution bug F8)", me.Index)
+	}
+
+	// OCSF output file must exist and contain exactly 2 events: sig-a and sig-c
+	ocsfData, err := os.ReadFile(report.OCSFJSONFile)
+	if err != nil {
+		t.Fatalf("read ocsf output: %v", err)
+	}
+	var events []map[string]interface{}
+	if err := json.Unmarshal(ocsfData, &events); err != nil {
+		t.Fatalf("ocsf output not valid JSON: %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("ocsf events count = %d, want 2 (sig-a and sig-c, sig-b skipped)", len(events))
+	}
+
+	// Verify the events belong to sig-a and sig-c (not sig-b) by checking Metadata.UID
+	for i, ev := range events {
+		meta, ok := ev["metadata"].(map[string]interface{})
+		if !ok {
+			t.Errorf("event[%d] metadata missing or not an object", i)
+			continue
+		}
+		uid, _ := meta["uid"].(string)
+		if uid == "sig-b" {
+			t.Errorf("event[%d] is for sig-b — it should have been skipped", i)
+		}
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func filterErrors(errs []dryrun.ValidationError, stage string) []dryrun.ValidationError {
