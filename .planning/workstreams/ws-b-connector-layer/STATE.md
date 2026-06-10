@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
-current_phase: 02
-current_plan: 6
-status: complete
-stopped_at: "phase complete"
+current_phase: 03
+current_plan: N/A
+status: planned
+stopped_at: "phase 3 planned — 4 plans, 3 waves, plan-checker PASS"
 last_updated: "2026-05-28T00:00:00Z"
 last_activity: 2026-05-28
 progress:
@@ -47,6 +47,6 @@ Phase: 02 (connector-layer) — COMPLETE
 
 ## Session Continuity
 
-**Stopped At:** Phase complete
-**Resume File:** phases/02-connector-layer/02-VERIFICATION.md
+**Stopped At:** Phase 3 (review remediation) planned and verified — ready for /gsd-execute-phase 3
+**Resume File:** phases/03-review-remediation/03-CONTEXT.md (findings register F1–F17)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
