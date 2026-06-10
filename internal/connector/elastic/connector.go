@@ -84,6 +84,14 @@ type Connector struct {
 	apiKeyHeader string // pre-computed "ApiKey <base64(id:key)>"
 }
 
+// Cfg returns a copy of the stored configuration. Intended for white-box tests only.
+// NOTE: cfg.APIKey is always "" after New() — zeroed for security (F16).
+func (c *Connector) Cfg() Config { return c.cfg }
+
+// APIKeyHeader returns the pre-computed Authorization header value.
+// Intended for white-box tests only.
+func (c *Connector) APIKeyHeader() string { return c.apiKeyHeader }
+
 // New creates an Elastic connector with the given configuration.
 // Call Connect before sending.
 func New(cfg Config) *Connector {
@@ -104,6 +112,9 @@ func New(cfg Config) *Connector {
 		encoded := base64.StdEncoding.EncodeToString([]byte(cfg.APIKey))
 		apiKeyHeader = "ApiKey " + encoded
 	}
+	// F16: zero the raw APIKey after computing the header — it must not be retained
+	// in process memory on the Connector struct after New() returns.
+	cfg.APIKey = ""
 
 	return &Connector{
 		cfg:          cfg,
@@ -131,7 +142,8 @@ func (c *Connector) Connect(ctx context.Context) error {
 	if c.cfg.Endpoint == "" {
 		return fmt.Errorf("elastic: Endpoint is required")
 	}
-	if c.cfg.APIKey == "" {
+	// F16: check apiKeyHeader (not cfg.APIKey — raw key is zeroed after New()).
+	if c.apiKeyHeader == "" {
 		return fmt.Errorf("elastic: APIKey is required")
 	}
 
@@ -189,9 +201,7 @@ func (c *Connector) Connect(ctx context.Context) error {
 //   - Signals that fail OCSF mapping are skipped; an entirely-unmappable batch
 //     returns Status="delivered" with no /_bulk POST (existing behaviour preserved).
 //
-// NOTE: The action line construction is intentionally kept as-is here. Plan 03-03
-// fixes F4 (NDJSON injection) by switching to json.Marshal for the action line.
-// Do not restructure the action line in this plan to avoid collision.
+// Security: action lines are produced via json.Marshal (F4 — T-03-11 mitigated).
 func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*connector.DeliveryAck, error) {
 	if c.client == nil {
 		err := fmt.Errorf("elastic: Send called before Connect")
@@ -253,12 +263,20 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 // Signals that fail OCSF mapping are skipped; if all signals are unmappable
 // the chunk is empty and no POST is issued (returns nil — not a failure).
 //
-// NOTE: The action line uses string concatenation of cfg.Index (existing behaviour).
-// Plan 03-03 will replace this with json.Marshal to close F4 (NDJSON injection).
-// Do not modify the action line construction here.
+// F4: the action line is produced by json.Marshal of a typed struct so that a
+// hostile cfg.Index value containing quotes or braces cannot inject /_bulk API
+// parameters (T-03-11 mitigated).
 func (c *Connector) sendChunk(ctx context.Context, signals []signal.Signal) error {
 	var buf bytes.Buffer
-	actionLine := []byte(`{"index":{"_index":"` + c.cfg.Index + `"}}` + "\n")
+	// F4: use json.Marshal to build the action line — cfg.Index is treated as data,
+	// never as syntax. A Marshal error on a plain string map is effectively impossible
+	// but is handled defensively by returning a failed error.
+	actionObj := map[string]interface{}{"index": map[string]string{"_index": c.cfg.Index}}
+	actionBytes, err := json.Marshal(actionObj)
+	if err != nil {
+		return fmt.Errorf("building action line: %w", err)
+	}
+	actionLine := append(actionBytes, '\n')
 
 	for _, s := range signals {
 		ev, err := c.mapper.Map(s)
