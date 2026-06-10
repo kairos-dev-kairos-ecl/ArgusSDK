@@ -13,6 +13,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // ---------------------------------------------------------------------------
@@ -208,7 +210,7 @@ func TestWatcher_CallsOnChange(t *testing.T) {
 		case called <- cfg:
 		default:
 		}
-	})
+	}, nil) // nil logger → zap.NewNop()
 	if err != nil {
 		t.Fatalf("NewWatcher: %v", err)
 	}
@@ -240,5 +242,201 @@ func TestWatcher_CallsOnChange(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("onChange was not called within 2 seconds after file write")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F9: atomic-rename watcher tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestWatcher_AtomicRenameTriggersReload (F9): an atomic-rename save (write temp +
+// rename over target) must trigger onChange with the new config.
+func TestWatcher_AtomicRenameTriggersReload(t *testing.T) {
+	initialYAML := `connectors:
+  - enabled: true
+    type: splunk_hec
+    settings:
+      endpoint: "https://splunk.example.com:8088"
+`
+	// Create the initial target file.
+	target, err := os.CreateTemp("", "watch-target-*.yaml")
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	targetPath := target.Name()
+	target.WriteString(initialYAML)
+	target.Close()
+	defer os.Remove(targetPath)
+
+	called := make(chan *ConnectorsFileConfig, 1)
+	w, err := NewWatcher(targetPath, func(cfg *ConnectorsFileConfig) {
+		select {
+		case called <- cfg:
+		default:
+		}
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+
+	// Give the watcher time to start.
+	time.Sleep(150 * time.Millisecond)
+
+	// Atomic-rename save: write new YAML to sibling temp, Close(), then Rename over target.
+	updatedYAML := `connectors:
+  - enabled: true
+    type: kafka
+    settings:
+      brokers:
+        - "broker:9092"
+`
+	tmp, err := os.CreateTemp("", "watch-tmp-*.yaml")
+	if err != nil {
+		t.Fatalf("create tmp: %v", err)
+	}
+	tmpPath := tmp.Name()
+	tmp.WriteString(updatedYAML)
+	tmp.Close() // Windows: must close before rename
+	defer os.Remove(tmpPath)
+
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	select {
+	case cfg := <-called:
+		if cfg == nil {
+			t.Fatal("onChange called with nil config after atomic rename")
+		}
+		if len(cfg.Connectors) == 0 || cfg.Connectors[0].Type != "kafka" {
+			t.Errorf("expected kafka connector after reload, got %+v", cfg)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("onChange was not called within 3 seconds after atomic rename")
+	}
+}
+
+// TestWatcher_IgnoresSiblingFiles (F9): writing a different file in the same
+// directory must NOT trigger onChange.
+func TestWatcher_IgnoresSiblingFiles(t *testing.T) {
+	initialYAML := `connectors:
+  - enabled: true
+    type: splunk_hec
+    settings:
+      endpoint: "https://splunk.example.com:8088"
+`
+	target, err := os.CreateTemp("", "watch-main-*.yaml")
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	targetPath := target.Name()
+	target.WriteString(initialYAML)
+	target.Close()
+	defer os.Remove(targetPath)
+
+	called := make(chan struct{}, 1)
+	w, err := NewWatcher(targetPath, func(_ *ConnectorsFileConfig) {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Write a different file in the same directory.
+	sibling, err := os.CreateTemp("", "sibling-*.yaml")
+	if err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+	sibling.WriteString("connectors: []")
+	sibling.Close()
+	defer os.Remove(sibling.Name())
+
+	// Wait briefly — onChange must NOT be called.
+	select {
+	case <-called:
+		t.Error("onChange was called for a sibling file (must be ignored)")
+	case <-time.After(500 * time.Millisecond):
+		// Correct: no onChange for unrelated files.
+	}
+}
+
+// TestWatcher_MalformedYAMLKeepsPrevious (F9/T-02-03 regression): overwriting the
+// target with malformed YAML must not call onChange; a subsequent valid write fires.
+func TestWatcher_MalformedYAMLKeepsPrevious(t *testing.T) {
+	validYAML := `connectors:
+  - enabled: true
+    type: splunk_hec
+    settings:
+      endpoint: "https://splunk.example.com:8088"
+`
+	target, err := os.CreateTemp("", "watch-malformed-*.yaml")
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	targetPath := target.Name()
+	target.WriteString(validYAML)
+	target.Close()
+	defer os.Remove(targetPath)
+
+	called := make(chan *ConnectorsFileConfig, 2)
+	w, err := NewWatcher(targetPath, func(cfg *ConnectorsFileConfig) {
+		select {
+		case called <- cfg:
+		default:
+		}
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Write malformed YAML — onChange must NOT fire.
+	if err := os.WriteFile(targetPath, []byte(":::invalid yaml:::"), 0o600); err != nil {
+		t.Fatalf("write malformed: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if len(called) != 0 {
+		t.Error("onChange was called after malformed YAML write — must not be")
+	}
+
+	// Write valid YAML — onChange must fire.
+	updatedYAML := `connectors:
+  - enabled: true
+    type: kafka
+    settings:
+      brokers:
+        - "kafka:9092"
+`
+	if err := os.WriteFile(targetPath, []byte(updatedYAML), 0o600); err != nil {
+		t.Fatalf("write valid: %v", err)
+	}
+	select {
+	case cfg := <-called:
+		if cfg == nil || len(cfg.Connectors) == 0 || cfg.Connectors[0].Type != "kafka" {
+			t.Errorf("expected kafka connector after valid reload, got %+v", cfg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("onChange not called after valid YAML write following malformed write")
 	}
 }
