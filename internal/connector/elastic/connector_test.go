@@ -685,6 +685,142 @@ func TestSend_ChunkFailureAborts(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// F4: hostile index injection tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestSend_HostileIndexNameStaysWellFormed (F4): index name containing quote/brace
+// injection characters must NOT alter the /_bulk NDJSON structure.
+func TestSend_HostileIndexNameStaysWellFormed(t *testing.T) {
+	var capturedBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			clusterInfoOK(w)
+		case "/_bulk":
+			body, _ := io.ReadAll(r.Body)
+			capturedBody = body
+			bulkSuccess(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	// Hostile index: contains quotes and braces that would break string concatenation.
+	hostileIndex := `evil"}},{"delete":{"_index":"x`
+
+	c := elastic.NewWithClient(elastic.Config{
+		Endpoint: srv.URL,
+		APIKey:   "id:key",
+		Index:    hostileIndex,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), makeBatch(1))
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if ack.Status != "delivered" {
+		t.Fatalf("expected Status=delivered, got %q", ack.Status)
+	}
+
+	// Parse NDJSON: odd lines (0, 2, ...) are action lines, even lines (1, 3, ...) are docs.
+	lines := strings.Split(strings.TrimSpace(string(capturedBody)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 NDJSON lines, got %d", len(lines))
+	}
+
+	// Assert no "delete" action appears as a separate JSON document.
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &doc); err != nil {
+			t.Errorf("line %d is not valid JSON: %v (line=%q)", i, err, line)
+			continue
+		}
+		if _, hasDelete := doc["delete"]; hasDelete {
+			t.Errorf("line %d contains injected 'delete' action: %q", i, line)
+		}
+	}
+
+	// Assert every action line has exactly one top-level key ("index") and
+	// the _index value equals the hostile string verbatim (escaped, not interpreted).
+	for i := 0; i < len(lines); i += 2 {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var action map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &action); err != nil {
+			t.Errorf("action line %d not valid JSON: %v", i, err)
+			continue
+		}
+		if len(action) != 1 {
+			t.Errorf("action line %d has %d top-level keys, want 1: %q", i, len(action), line)
+		}
+		indexRaw, ok := action["index"]
+		if !ok {
+			t.Errorf("action line %d missing 'index' key: %q", i, line)
+			continue
+		}
+		var indexObj map[string]string
+		if err := json.Unmarshal(indexRaw, &indexObj); err != nil {
+			t.Errorf("action line %d index value not valid JSON object: %v", i, err)
+			continue
+		}
+		if got := indexObj["_index"]; got != hostileIndex {
+			t.Errorf("action line %d _index = %q, want %q", i, got, hostileIndex)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F16: APIKey zeroing tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestNew_APIKeyZeroedAfterHeader (F16): after New(), the raw APIKey must be
+// cleared from cfg and apiKeyHeader must be correctly computed.
+// White-box test — package elastic.
+func TestNew_APIKeyZeroedAfterHeader(t *testing.T) {
+	c := elastic.New(elastic.Config{
+		Endpoint: "https://localhost:9200",
+		APIKey:   "id:key",
+		Index:    "argus-signals",
+	})
+	// The exported APIKey field must be empty after New().
+	if c.Cfg().APIKey != "" {
+		t.Errorf("expected cfg.APIKey to be zeroed after New(), got %q", c.Cfg().APIKey)
+	}
+	// The pre-computed header must equal the expected base64 encoding.
+	import64 := "ApiKey " + "aWQ6a2V5" // base64("id:key") == "aWQ6a2V5"
+	if c.APIKeyHeader() != import64 {
+		t.Errorf("apiKeyHeader = %q, want %q", c.APIKeyHeader(), import64)
+	}
+}
+
+// TestConnect_EmptyAPIKeyStillRejected (F16 regression): New with empty APIKey →
+// Connect returns error (now via apiKeyHeader == "" check).
+func TestConnect_EmptyAPIKeyStillRejected(t *testing.T) {
+	c := elastic.New(elastic.Config{
+		Endpoint: "https://localhost:9200",
+		APIKey:   "",
+	})
+	err := c.Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty APIKey, got nil")
+	}
+	if !strings.Contains(err.Error(), "APIKey is required") {
+		t.Fatalf("expected 'APIKey is required' error, got %q", err.Error())
+	}
+}
+
 // TestSend_AllUnmappableStillDelivered (regression): batch where every signal
 // fails OCSF mapping → ack delivered, err nil, zero POSTs.
 func TestSend_AllUnmappableStillDelivered(t *testing.T) {
