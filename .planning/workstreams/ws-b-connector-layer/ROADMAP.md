@@ -75,7 +75,7 @@ Elastic NDJSON injection sink must be closed.
 
 Plans:
 - [x] 03-01-PLAN.md — Buffer/WAL rewrite: status-byte format, race fix, multi-segment drain, nil-drain guard
-- [ ] 03-02-PLAN.md — Delivery contract: unified failed⇒error, batch chunking, dispatcher counters
+- [x] 03-02-PLAN.md — Delivery contract: unified failed⇒error, batch chunking, dispatcher counters
 - [ ] 03-03-PLAN.md — Injection + infra fixes: Elastic action line, Watcher rename, circuit breaker TOCTOU, medium/low items
 - [ ] 03-04-PLAN.md — dryrun index alignment + full-suite race verification
 
@@ -84,4 +84,4 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 2. Connector Layer | 6/6 | Complete | 2026-05-28 |
-| 3. Review Remediation | 1/4 | In Progress | — |
+| 3. Review Remediation | 2/4 | In Progress | — |

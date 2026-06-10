@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
 current_phase: 03
-current_plan: "03-01"
+current_plan: "03-02"
 status: in_progress
-stopped_at: "03-01 complete — WAL/buffer rewrite done; F1,F2,F3,F5,F14 closed"
+stopped_at: "03-02 complete — delivery contract + chunking + dispatcher counters done; F6,F7 closed"
 last_updated: "2026-06-10T00:00:00Z"
 last_activity: 2026-06-10
 progress:
@@ -21,9 +21,9 @@ progress:
 ## Current Position
 
 Phase: 03 (review-remediation) — IN PROGRESS
-**Status:** 1/4 plans complete
+**Status:** 2/4 plans complete
 **Last Activity:** 2026-06-10
-**Last Activity Description:** 03-01 WAL/buffer rewrite complete — F1 (status-byte format), F2 (race-free Write), F3 (multi-segment drain), F5 (nil-drain guard), F14 (backoff outside stream) all closed
+**Last Activity Description:** 03-02 delivery contract complete — F6 (failed ack implies non-nil error in splunk+elastic+dispatcher counters), F7 (chunked sequential POSTs, abort-on-first-failure) all closed
 
 ## Plans Completed
 
@@ -36,12 +36,12 @@ Phase: 03 (review-remediation) — IN PROGRESS
 | 02-05 | Elastic connector | 2a5c827 | done |
 | 02-06 | WAL dead-letter buffer | 8a7a2ed | done |
 | 03-01 | WAL/buffer hardening (F1,F2,F3,F5,F14) | 39da508 | done |
+| 03-02 | Delivery contract (F6,F7,dispatcher counters) | 39c0b22 | done |
 
 ## Plans Remaining
 
 | Plan | Name | Wave | Status |
 |------|------|------|--------|
-| 03-02 | Delivery contract (F6,F7,dispatcher counters) | 1 | planned |
 | 03-03 | Injection + infra fixes (F4,F8,F9,F10,F11,F12,F13,F15,F16) | 2 | planned |
 | 03-04 | dryrun alignment + full-suite race verification | 3 | planned |
 
@@ -57,9 +57,13 @@ Phase: 03 (review-remediation) — IN PROGRESS
 - drainOnce opens mark file once per segment and reuses handle across all markConsumedAt calls — avoids per-record open/close overhead on Windows
 - Backoff owned by drainLoop/Flush; streamRecords callback returns errDrainFailed sentinel immediately (F14)
 - Start/Flush return error on nil drain; agent.stop removes the nil Flush call (F5)
+- Chunking is ceil(n/limit) sequential requests; abort on first failed chunk naming chunk i/total in error (F7)
+- sendChunk returns nil for all-unmappable chunk (skip POST, not a failure) — preserves existing empty-payload behavior
+- Dispatcher accepted incremented only on successful queue insert, not on full-queue or shutdown rejection (F6)
+- Stats() returns map[string]uint64 for stable observability accessor (accepted/delivered/failed/dropped)
 
 ## Session Continuity
 
-**Stopped At:** 03-01 complete — buffer/WAL hardening done; next: 03-02 delivery contract
-**Resume File:** phases/03-review-remediation/03-CONTEXT.md (F6, F7 are 03-02 scope)
+**Stopped At:** 03-02 complete — delivery contract done; next: 03-03 injection + infra fixes
+**Resume File:** phases/03-review-remediation/03-CONTEXT.md (F4,F8-F16 are 03-03 scope)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
