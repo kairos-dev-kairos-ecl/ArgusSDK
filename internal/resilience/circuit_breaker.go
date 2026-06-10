@@ -54,28 +54,33 @@ func NewCircuitBreaker(name string, maxFailures int, timeout time.Duration, succ
 	}
 }
 
-// Call executes the operation and updates circuit breaker state
+// Call executes the operation and updates circuit breaker state.
+//
+// F10 / T-03-14 mitigated: a single cb.mu.Lock() covers the full Open state
+// check, the timeout comparison (time.Since(cb.lastFailureTime)), and the
+// Open->HalfOpen transition decision. No guarded field is read while the mutex
+// is unlocked, eliminating the TOCTOU window where two concurrent goroutines
+// could both observe state==Open and both independently transition to HalfOpen.
 func (cb *CircuitBreaker) Call(operation func() error) error {
 	cb.mu.Lock()
-	state := cb.state
-	cb.mu.Unlock()
-
-	if state == CircuitOpen {
-		// Check if timeout has passed to enter half-open state
+	// F10: read state AND lastFailureTime under the same lock. Transition to
+	// HalfOpen only if we are the goroutine that wins the single lock hold.
+	if cb.state == CircuitOpen {
 		if time.Since(cb.lastFailureTime) > cb.timeout {
-			cb.mu.Lock()
+			// We hold the lock — transition to HalfOpen exclusively.
 			cb.state = CircuitHalfOpen
 			cb.successes = 0
 			cb.failures = 0
-			cb.mu.Unlock()
 		} else {
+			cb.mu.Unlock()
 			return fmt.Errorf("circuit breaker %s is open", cb.name)
 		}
 	}
+	cb.mu.Unlock()
 
 	atomic.AddInt64(&cb.totalAttempts, 1)
 
-	// Execute operation
+	// Execute operation (no mutex held during the user-supplied operation).
 	err := operation()
 
 	cb.mu.Lock()
