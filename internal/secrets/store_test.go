@@ -3,6 +3,7 @@ package secrets
 import (
 	"crypto/rand"
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -140,11 +141,14 @@ func TestSaveSecrets_TempFilePerms(t *testing.T) {
 		t.Error("secrets path is a directory, expected a file")
 	}
 
-	// On non-Windows: assert exactly 0600 mode.
-	// On Windows: advisory only — verify round-trip instead.
-	perm := info.Mode().Perm()
-	if perm != 0 { // Windows returns 0 for regular files
-		if perm != 0o600 {
+	// On POSIX: assert exactly 0600 mode.
+	// On Windows: file permissions are advisory (Go's os.Chmod has no effect on
+	// NTFS ACLs) and Mode().Perm() always returns 0666 for regular files.
+	// The meaningful assertion on Windows is that SaveSecrets uses
+	// os.OpenFile(..., 0600) at creation (enforced by the must_haves contains-check
+	// on "O_CREATE" in the plan). We skip the mode assertion on Windows.
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Errorf("file mode = %04o, want 0600", perm)
 		}
 	}

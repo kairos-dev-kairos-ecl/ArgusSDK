@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 )
 
 // Canonical secret keys for backward compatibility with env-var fallback
@@ -26,9 +27,18 @@ const (
 //   - Version (1 byte): 0x01
 //   - Nonce (12 bytes): random per write
 //   - Ciphertext+Tag (remaining bytes): encrypted gob-encoded map
+//
+// F11 / T-03-16 mitigated: GetSecret serves from a cached decrypted map behind
+// sync.RWMutex; SaveSecrets invalidates and repopulates the cache. The store
+// file is NOT re-read and re-decrypted on every GetSecret call.
 type Store struct {
 	path      string
 	masterKey []byte
+
+	// F11: in-memory cache of the decrypted secrets map.
+	cacheMu    sync.RWMutex
+	cache      map[string]string
+	cacheValid bool
 }
 
 // NewStore creates a Store backed by the given file path.
@@ -114,8 +124,52 @@ func (s *Store) LoadSecrets() (map[string]string, error) {
 	return secrets, nil
 }
 
+// lookup returns the value for key from the in-memory cache, loading from disk
+// if the cache is not yet populated.
+//
+// F11: RLock fast path when cacheValid; full Lock + double-check + load on
+// cache miss. Never returns the internal map slice to callers.
+func (s *Store) lookup(key string) (string, bool, error) {
+	// Fast path: cache already valid.
+	s.cacheMu.RLock()
+	if s.cacheValid {
+		v, ok := s.cache[key]
+		s.cacheMu.RUnlock()
+		return v, ok, nil
+	}
+	s.cacheMu.RUnlock()
+
+	// Slow path: acquire write lock, double-check, then load from disk.
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	// Double-check — another goroutine may have loaded while we waited.
+	if s.cacheValid {
+		v, ok := s.cache[key]
+		return v, ok, nil
+	}
+
+	m, err := s.LoadSecrets()
+	if err != nil {
+		return "", false, err
+	}
+
+	// Populate cache with a copy — never expose the internal map.
+	cp := make(map[string]string, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	s.cache = cp
+	s.cacheValid = true
+
+	v, ok := s.cache[key]
+	return v, ok, nil
+}
+
 // SaveSecrets encrypts and atomically writes the secrets map to the file with 0600 permissions.
 // Uses a random nonce per write, ensuring identical plaintext produces different ciphertexts.
+// F11: on successful write, updates the in-memory cache so subsequent GetSecret calls
+// are served without re-reading the file.
 func (s *Store) SaveSecrets(secrets map[string]string) error {
 	// Encode map to gob
 	var buf bytes.Buffer
@@ -151,9 +205,10 @@ func (s *Store) SaveSecrets(secrets map[string]string) error {
 	fileData.Write(nonce)
 	fileData.Write(ciphertext)
 
-	// Atomic write: temp file + rename
+	// F15 / T-03-15 mitigated: use O_CREATE|O_WRONLY|O_TRUNC with mode 0600 so
+	// the temp file is never momentarily world-readable (os.Create uses 0666&umask).
 	tmpPath := s.path + ".tmp"
-	f, err := os.Create(tmpPath)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -182,10 +237,20 @@ func (s *Store) SaveSecrets(secrets map[string]string) error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
-	// Set file permissions to 0600 (owner read/write only)
+	// Set file permissions to 0600 (owner read/write only) — belt-and-braces.
 	if err := os.Chmod(s.path, 0600); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
+
+	// F11: update cache with a copy of the newly-saved map.
+	s.cacheMu.Lock()
+	cp := make(map[string]string, len(secrets))
+	for k, v := range secrets {
+		cp[k] = v
+	}
+	s.cache = cp
+	s.cacheValid = true
+	s.cacheMu.Unlock()
 
 	return nil
 }
