@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -146,9 +145,8 @@ func (a *Agent) stop() error {
 	}
 
 	if a.buffer != nil {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = a.buffer.Flush(flushCtx, nil) // TODO: pass real drain func
+		// TODO: call a.buffer.Flush with the real dispatcher drain func once
+		// agent.start wiring lands (future phase; see start() TODOs).
 		_ = a.buffer.Close()
 	}
 
