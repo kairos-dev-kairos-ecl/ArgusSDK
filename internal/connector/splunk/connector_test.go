@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,53 @@ func newTestBatch() *connector.SignalBatch {
 		InstanceID: "instance-001",
 		GroupID:    "group-001",
 		Signals:    []signal.Signal{newTestSignal()},
+		ReceivedAt: time.Now(),
+		UseOCSF:    true,
+	}
+}
+
+// newBatchOfN returns a SignalBatch with n mappable signals.
+func newBatchOfN(n int) *connector.SignalBatch {
+	sigs := make([]signal.Signal, n)
+	for i := range sigs {
+		sigs[i] = signal.Signal{
+			SignalID:  fmt.Sprintf("sig-%03d", i),
+			TraceID:   fmt.Sprintf("trace-%03d", i),
+			SpanID:    fmt.Sprintf("span-%03d", i),
+			Layer:     signal.L9APIGateway,
+			Category:  "http.request",
+			Severity:  signal.SeverityInfo,
+			AppID:     "test-app",
+			Timestamp: time.Now(),
+		}
+	}
+	return &connector.SignalBatch{
+		BatchID:    "batch-splunk-chunk",
+		InstanceID: "instance-001",
+		GroupID:    "group-001",
+		Signals:    sigs,
+		ReceivedAt: time.Now(),
+		UseOCSF:    true,
+	}
+}
+
+// newUnmappableBatch returns a batch where every signal has an unmappable layer.
+func newUnmappableBatch(n int) *connector.SignalBatch {
+	sigs := make([]signal.Signal, n)
+	for i := range sigs {
+		sigs[i] = signal.Signal{
+			SignalID:  fmt.Sprintf("bad-%03d", i),
+			Layer:     signal.Layer(999), // unknown layer — OCSF mapper will reject
+			Category:  "unknown",
+			Severity:  signal.SeverityInfo,
+			AppID:     "test-app",
+			Timestamp: time.Now(),
+		}
+	}
+	return &connector.SignalBatch{
+		BatchID:    "batch-splunk-unmappable",
+		InstanceID: "instance-001",
+		Signals:    sigs,
 		ReceivedAt: time.Now(),
 		UseOCSF:    true,
 	}
@@ -407,6 +455,265 @@ func TestSplunkConnector_Close(t *testing.T) {
 	// Close before Connect — must not panic.
 	if err := c.Close(); err != nil {
 		t.Logf("Close() before Connect returned: %v (acceptable)", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F6: failed=>error contract tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestSend_FailedAckImpliesError (F6): HEC returns code:4; Send must return both
+// a failed ack AND a non-nil error.
+func TestSend_FailedAckImpliesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/services/collector/health":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/services/collector/event":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"text":"Invalid token","code":4}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := splunk.NewWithClient(splunk.Config{
+		Endpoint: srv.URL,
+		Token:    "bad-token",
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), newTestBatch())
+
+	// F6 contract: non-nil error required alongside failed ack
+	if err == nil {
+		t.Error("Send() with HEC code:4 must return non-nil error (F6 contract)")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+	// Both ack.Error and err.Error() must reference the HEC detail
+	if !strings.Contains(ack.Error, "4") && !strings.Contains(ack.Error, "Invalid token") {
+		t.Errorf("ack.Error = %q, want reference to HEC code or text", ack.Error)
+	}
+	if err != nil && !strings.Contains(err.Error(), "4") && !strings.Contains(err.Error(), "Invalid token") && !strings.Contains(err.Error(), "splunk_hec") {
+		t.Errorf("err.Error() = %q, want reference to failure detail", err.Error())
+	}
+}
+
+// TestSend_Non200ImpliesError (F6): server returns 503; Send must return non-nil
+// error AND failed ack.
+func TestSend_Non200ImpliesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/services/collector/health":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/services/collector/event":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `service unavailable`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := splunk.NewWithClient(splunk.Config{
+		Endpoint: srv.URL,
+		Token:    "test-token",
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+
+	ack, err := c.Send(context.Background(), newTestBatch())
+
+	if err == nil {
+		t.Error("Send() with HTTP 503 must return non-nil error (F6 contract)")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F7: chunking tests (new — RED phase)
+// ---------------------------------------------------------------------------
+
+// TestSend_ChunksBatch (F7): MaxBatchEvents=2, batch of 5 mappable signals;
+// server must receive exactly 3 POSTs and total HEC records across bodies == 5.
+func TestSend_ChunksBatch(t *testing.T) {
+	var postCount int32
+	var allBodies [][]byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/services/collector/health":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/services/collector/event":
+			atomic.AddInt32(&postCount, 1)
+			body, _ := io.ReadAll(r.Body)
+			allBodies = append(allBodies, body)
+			hecSuccess(w)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := splunk.NewWithClient(splunk.Config{
+		Endpoint:       srv.URL,
+		Token:          "test-token",
+		MaxBatchEvents: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+
+	batch := newBatchOfN(5)
+	ack, err := c.Send(context.Background(), batch)
+	if err != nil {
+		t.Fatalf("Send() unexpected error: %v", err)
+	}
+	if ack.Status != "delivered" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "delivered")
+	}
+
+	// Exactly ceil(5/2) = 3 POSTs
+	if got := atomic.LoadInt32(&postCount); got != 3 {
+		t.Errorf("POST count = %d, want 3", got)
+	}
+
+	// Count total HEC records across all bodies
+	totalRecords := 0
+	for _, body := range allBodies {
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				totalRecords++
+			}
+		}
+	}
+	if totalRecords != 5 {
+		t.Errorf("total HEC records = %d, want 5", totalRecords)
+	}
+}
+
+// TestSend_ChunkFailureAborts (F7): MaxBatchEvents=2, 6 signals; server succeeds
+// on POST 1, fails (code:4) on POST 2; exactly 2 POSTs sent (third never sent),
+// err != nil, ack.Status=="failed", ack.Error identifies chunk 2 of 3.
+func TestSend_ChunkFailureAborts(t *testing.T) {
+	var postCount int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/services/collector/health":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/services/collector/event":
+			n := atomic.AddInt32(&postCount, 1)
+			if n == 1 {
+				hecSuccess(w)
+			} else {
+				// POST 2 and beyond: fail
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, `{"text":"Invalid token","code":4}`)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := splunk.NewWithClient(splunk.Config{
+		Endpoint:       srv.URL,
+		Token:          "test-token",
+		MaxBatchEvents: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+
+	batch := newBatchOfN(6)
+	ack, err := c.Send(context.Background(), batch)
+
+	// Must return non-nil error (F6 contract on failed chunk)
+	if err == nil {
+		t.Error("Send() with chunk 2 failure must return non-nil error")
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "failed" {
+		t.Errorf("ack.Status = %q, want %q", ack.Status, "failed")
+	}
+
+	// Exactly 2 POSTs — chunk 3 was never sent
+	if got := atomic.LoadInt32(&postCount); got != 2 {
+		t.Errorf("POST count = %d, want 2 (abort on first failed chunk)", got)
+	}
+
+	// ack.Error must identify chunk 2 of 3
+	if !strings.Contains(ack.Error, "2") || !strings.Contains(ack.Error, "3") {
+		t.Errorf("ack.Error = %q, want reference to chunk 2 of 3", ack.Error)
+	}
+}
+
+// TestSend_AllUnmappableStillDelivered (regression): batch where every signal
+// fails OCSF mapping → ack delivered, err nil, zero POSTs.
+func TestSend_AllUnmappableStillDelivered(t *testing.T) {
+	var postCount int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/services/collector/health":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/services/collector/event":
+			atomic.AddInt32(&postCount, 1)
+			hecSuccess(w)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := splunk.NewWithClient(splunk.Config{
+		Endpoint:       srv.URL,
+		Token:          "test-token",
+		MaxBatchEvents: 2,
+	}, srv.Client())
+
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error: %v", err)
+	}
+
+	batch := newUnmappableBatch(4)
+	ack, err := c.Send(context.Background(), batch)
+
+	if err != nil {
+		t.Errorf("Send() with all-unmappable batch must return nil error, got: %v", err)
+	}
+	if ack == nil {
+		t.Fatal("Send() returned nil ack")
+	}
+	if ack.Status != "delivered" {
+		t.Errorf("ack.Status = %q, want %q (all-unmappable = empty payload = delivered)", ack.Status, "delivered")
+	}
+	if n := atomic.LoadInt32(&postCount); n != 0 {
+		t.Errorf("POST count = %d, want 0 (no HEC POSTs for empty payload)", n)
 	}
 }
 
