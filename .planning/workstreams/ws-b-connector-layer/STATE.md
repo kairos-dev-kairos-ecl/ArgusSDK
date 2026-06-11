@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
 current_phase: 04
-current_plan: "04"
+current_plan: "05"
 status: in-progress
-stopped_at: "04-03 complete — argusxdr gRPC IngestBatch connector implemented; 7 tests pass; SC-8 done. Ready for 04-04 (LLM gRPC + EUC collectors)."
-last_updated: "2026-06-11T14:10:00Z"
+stopped_at: "04-04 complete — LLM gRPC collector (SC-5) and EUC Observation→Signal collector (SC-6) implemented; 9 tests pass; NewNoopOSCollector exported. Ready for 04-05 (agent start/stop wiring + ingest loop + drain)."
+last_updated: "2026-06-11T13:25:00Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 16
-  completed_plans: 13
-  percent: 81
+  completed_plans: 14
+  percent: 87
 ---
 
 # WS-B Connector Layer — State
@@ -21,9 +21,9 @@ progress:
 ## Current Position
 
 Phase: 04 (agent-wiring) — IN PROGRESS
-**Status:** 3/6 plans complete
+**Status:** 4/6 plans complete
 **Last Activity:** 2026-06-11
-**Last Activity Description:** 04-03 argusxdr gRPC IngestBatch — Connect with TLS 1.3 + per-RPC API-key creds, Send with proto marshal via ToProto, InstanceID/GroupID in metadata, UseOCSF ignored, failed ack on gRPC error; 7 tests pass via bufconn; SC-8 satisfied.
+**Last Activity Description:** 04-04 LLM gRPC collector + EUC collector — IngestBatch with signal.FromProto conversion, validation (SignalID/Layer), sync.Once GracefulStop, bufconn tests; EUC fanOut Category/Layer/ContextJSON, crypto/rand SignalID, NewNoopOSCollector; 9 tests pass; SC-5 and SC-6 satisfied.
 
 ## Plans Completed
 
@@ -42,13 +42,12 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 | 04-01 | Connector factory + BatchID generator | c1fb655 | done |
 | 04-02 | syslog CEF over TCP/TLS 1.3 | e3d33fd | done |
 | 04-03 | argusxdr gRPC IngestBatch | 5576dfe | done |
+| 04-04 | LLM gRPC collector + EUC collector | 9cc396b | done |
 
 ## Plans Remaining
 
 | Plan | Name | SC |
 |------|------|----|
-| 04-03 | argusxdr gRPC IngestBatch | SC-8 |
-| 04-04 | LLM gRPC collector + EUC collector | SC-5,6 |
 | 04-05 | agent start()/stop() wiring + ingest loop + drain | SC-2,3,4,12 |
 | 04-06 | Kafka/Elastic/Splunk testcontainers integration + CI | SC-9,10,11,12 |
 
@@ -88,10 +87,15 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 - argusxdr Health probes with empty IngestBatch{BatchId:"health-check"} — lightweight, no signal marshalling
 - argusxdr maxBatchSize defaults to 500 if unset; chunking sequential abort-on-first-failure (locked decision 9)
 - argusxdr UseOCSF silently ignored — always uses proto wire format (locked decision 5, T-04-10)
+- LLM collector startOnListener seam allows bufconn injection in tests without binding a real port
+- ingestServer embeds UnimplementedSDKIngestServiceServer by value (per generated NOTE in grpc stubs)
+- EUC Layer=L9APIGateway — observations sit at the network/API-gateway boundary in the 10-layer taxonomy
+- EUC SignalID uses crypto/rand 16-byte hex — no ULID dependency added (locked decision)
+- noopOSCollector exported as NewNoopOSCollector() — canonical cross-platform OS impl seam for Windows
 
 ## Session Continuity
 
-**Stopped At:** 04-03 complete — argusxdr gRPC IngestBatch connector implemented. Next: 04-04 LLM gRPC collector + EUC collector.
+**Stopped At:** 04-04 complete — LLM gRPC collector (SC-5) + EUC collector (SC-6) implemented. Next: 04-05 agent start()/stop() wiring + ingest loop + drain.
 **Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
 
