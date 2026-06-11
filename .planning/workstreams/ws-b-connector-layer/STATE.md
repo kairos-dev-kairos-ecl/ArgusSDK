@@ -4,26 +4,26 @@ milestone: v1.0
 milestone_name: connector-layer
 current_phase: 04
 current_plan: "06"
-status: in-progress
-stopped_at: "04-05 complete — agent start()/stop() wiring, ingest loop, registration seam, buffer.Flush with real drain. SC-2, SC-3, SC-4, SC-12 (smoke) satisfied. Ready for 04-06 (testcontainers integration + CI)."
-last_updated: "2026-06-11T13:30:41Z"
+status: complete
+stopped_at: "04-06 complete — Kafka+Elastic testcontainers integration tests, Splunk HEC env-gated smoke, GitHub Actions CI (build/vet/race/integration), Docker-free e2e smoke. SC-9, SC-10, SC-11, SC-12 satisfied. Phase 4 ALL PLANS DONE."
+last_updated: "2026-06-11T14:00:00Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
-  completed_plans: 15
-  percent: 93
+  completed_plans: 16
+  percent: 100
 ---
 
 # WS-B Connector Layer — State
 
 ## Current Position
 
-Phase: 04 (agent-wiring) — IN PROGRESS
-**Status:** 5/6 plans complete
+Phase: 04 (agent-wiring) — COMPLETE
+**Status:** 6/6 plans complete — ALL PHASE 4 PLANS DONE
 **Last Activity:** 2026-06-11
-**Last Activity Description:** 04-05 agent start()/stop() wiring — factory-built registry, per-OCSF-group ingest loop, buffer.Start+Flush with real drain, registration seam (SHA-256 localRegistrar), sync.WaitGroup graceful drain; 10 agent tests pass; SC-2, SC-3, SC-4, SC-12 satisfied.
+**Last Activity Description:** 04-06 integration tests + CI — Kafka+Elastic testcontainers (SC-9), Splunk HEC env-gated smoke (SC-10), GitHub Actions CI with CGO race gate (SC-11), Docker-free e2e smoke ingest→deliver→drain (SC-12). testcontainers-go v0.42.0 added (test-only). All 19 packages pass go test ./...; go build ./... clean.
 
 ## Plans Completed
 
@@ -44,12 +44,11 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 | 04-03 | argusxdr gRPC IngestBatch | 5576dfe | done |
 | 04-04 | LLM gRPC collector + EUC collector | 9cc396b | done |
 | 04-05 | agent start()/stop() wiring + ingest loop + drain | 0732354 | done |
+| 04-06 | Kafka/Elastic/Splunk integration + CI + smoke | c4ca668 | done |
 
 ## Plans Remaining
 
-| Plan | Name | SC |
-|------|------|----|
-| 04-06 | Kafka/Elastic/Splunk testcontainers integration + CI | SC-9,10,11,12 |
+None — all 16 plans complete.
 
 ## Decisions Made
 
@@ -101,7 +100,7 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 
 ## Session Continuity
 
-**Stopped At:** 04-05 complete — agent start()/stop() fully wired, ingest loop, registration seam, buffer.Flush with real drain. SC-2, SC-3, SC-4, SC-12 satisfied. Next: 04-06 (testcontainers integration tests + CI).
+**Stopped At:** 04-06 complete — ALL WS-B plans done. SC-9 Kafka+Elastic testcontainers, SC-10 Splunk HEC gated smoke, SC-11 CI with CGO race gate, SC-12 Docker-free e2e smoke.
 **Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
 

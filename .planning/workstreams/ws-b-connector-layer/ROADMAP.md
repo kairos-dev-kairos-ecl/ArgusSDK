@@ -16,7 +16,7 @@ The framework handles lifecycle, health, retry, and backpressure.
 
 - [x] **Phase 2: Connector Layer — Framework + OCSF + Priority Connectors**
 - [x] **Phase 3: Review Remediation — Buffer Hardening + Delivery Contract + Injection Fixes**
-- [ ] **Phase 4: Agent Wiring + Integration Hardening — Make the Agent Actually Run**
+- [x] **Phase 4: Agent Wiring + Integration Hardening — Make the Agent Actually Run**
 
 ## Phase Details
 
@@ -119,7 +119,7 @@ Plans:
 - [x] 04-03-PLAN.md — argusxdr connector: gRPC IngestBatch + TLS + API-key creds
 - [x] 04-04-PLAN.md — LLM gRPC collector + EUC Observation→Signal collector
 - [x] 04-05-PLAN.md — agent start()/stop() wiring: registry, dispatcher, buffer drain, ingest loop, registration seam
-- [ ] 04-06-PLAN.md — Kafka/Elastic/Splunk testcontainers integration tests + CI (-race gate) + cmd smoke
+- [x] 04-06-PLAN.md — Kafka/Elastic/Splunk testcontainers integration tests + CI (-race gate) + cmd smoke
 
 ## Progress
 
@@ -127,4 +127,4 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. Connector Layer | 6/6 | Complete | 2026-05-28 |
 | 3. Review Remediation | 4/4 | Complete | 2026-06-10 |
-| 4. Agent Wiring + Integration | 5/6 | In Progress | — |
+| 4. Agent Wiring + Integration | 6/6 | Complete | 2026-06-11 |
