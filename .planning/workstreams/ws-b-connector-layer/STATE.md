@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
 current_phase: 04
-current_plan: "05"
+current_plan: "06"
 status: in-progress
-stopped_at: "04-04 complete — LLM gRPC collector (SC-5) and EUC Observation→Signal collector (SC-6) implemented; 9 tests pass; NewNoopOSCollector exported. Ready for 04-05 (agent start/stop wiring + ingest loop + drain)."
-last_updated: "2026-06-11T13:25:00Z"
+stopped_at: "04-05 complete — agent start()/stop() wiring, ingest loop, registration seam, buffer.Flush with real drain. SC-2, SC-3, SC-4, SC-12 (smoke) satisfied. Ready for 04-06 (testcontainers integration + CI)."
+last_updated: "2026-06-11T13:30:41Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 16
-  completed_plans: 14
-  percent: 87
+  completed_plans: 15
+  percent: 93
 ---
 
 # WS-B Connector Layer — State
@@ -21,9 +21,9 @@ progress:
 ## Current Position
 
 Phase: 04 (agent-wiring) — IN PROGRESS
-**Status:** 4/6 plans complete
+**Status:** 5/6 plans complete
 **Last Activity:** 2026-06-11
-**Last Activity Description:** 04-04 LLM gRPC collector + EUC collector — IngestBatch with signal.FromProto conversion, validation (SignalID/Layer), sync.Once GracefulStop, bufconn tests; EUC fanOut Category/Layer/ContextJSON, crypto/rand SignalID, NewNoopOSCollector; 9 tests pass; SC-5 and SC-6 satisfied.
+**Last Activity Description:** 04-05 agent start()/stop() wiring — factory-built registry, per-OCSF-group ingest loop, buffer.Start+Flush with real drain, registration seam (SHA-256 localRegistrar), sync.WaitGroup graceful drain; 10 agent tests pass; SC-2, SC-3, SC-4, SC-12 satisfied.
 
 ## Plans Completed
 
@@ -43,12 +43,12 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 | 04-02 | syslog CEF over TCP/TLS 1.3 | e3d33fd | done |
 | 04-03 | argusxdr gRPC IngestBatch | 5576dfe | done |
 | 04-04 | LLM gRPC collector + EUC collector | 9cc396b | done |
+| 04-05 | agent start()/stop() wiring + ingest loop + drain | 0732354 | done |
 
 ## Plans Remaining
 
 | Plan | Name | SC |
 |------|------|----|
-| 04-05 | agent start()/stop() wiring + ingest loop + drain | SC-2,3,4,12 |
 | 04-06 | Kafka/Elastic/Splunk testcontainers integration + CI | SC-9,10,11,12 |
 
 ## Decisions Made
@@ -92,10 +92,16 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 - EUC Layer=L9APIGateway — observations sit at the network/API-gateway boundary in the 10-layer taxonomy
 - EUC SignalID uses crypto/rand 16-byte hex — no ULID dependency added (locked decision)
 - noopOSCollector exported as NewNoopOSCollector() — canonical cross-platform OS impl seam for Windows
+- localRegistrar derives InstanceID from SHA-256(groupID:installToken) truncated to 16 hex chars — deterministic, no live-XDR required (locked decision 8)
+- ingestLoop partitions connectors into ocsfTargets (OCSF=true AND Type!=argusxdr) and nonOCSFTargets; separate DispatchJobs per group (locked decisions 5, N5)
+- deliver() routes buffered batches by matching UseOCSF flag to the correct partition
+- stop() waits for ingest loop via sync.WaitGroup before Flush — guarantees in-flight batches are enqueued or buffered
+- shutdownTimeout=30s for buffer.Flush matches DefaultDispatchConfig.ShutdownTimeout
+- euc collector wired with NewNoopOSCollector as cross-platform seam in start(); real OSCollector deferred
 
 ## Session Continuity
 
-**Stopped At:** 04-04 complete — LLM gRPC collector (SC-5) + EUC collector (SC-6) implemented. Next: 04-05 agent start()/stop() wiring + ingest loop + drain.
+**Stopped At:** 04-05 complete — agent start()/stop() fully wired, ingest loop, registration seam, buffer.Flush with real drain. SC-2, SC-3, SC-4, SC-12 satisfied. Next: 04-06 (testcontainers integration tests + CI).
 **Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
 

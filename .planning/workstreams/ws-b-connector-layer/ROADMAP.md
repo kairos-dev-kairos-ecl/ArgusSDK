@@ -118,7 +118,7 @@ Plans:
 - [x] 04-02-PLAN.md — syslog connector: CEF over TCP/TLS 1.3
 - [x] 04-03-PLAN.md — argusxdr connector: gRPC IngestBatch + TLS + API-key creds
 - [x] 04-04-PLAN.md — LLM gRPC collector + EUC Observation→Signal collector
-- [ ] 04-05-PLAN.md — agent start()/stop() wiring: registry, dispatcher, buffer drain, ingest loop, registration seam
+- [x] 04-05-PLAN.md — agent start()/stop() wiring: registry, dispatcher, buffer drain, ingest loop, registration seam
 - [ ] 04-06-PLAN.md — Kafka/Elastic/Splunk testcontainers integration tests + CI (-race gate) + cmd smoke
 
 ## Progress
@@ -127,4 +127,4 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. Connector Layer | 6/6 | Complete | 2026-05-28 |
 | 3. Review Remediation | 4/4 | Complete | 2026-06-10 |
-| 4. Agent Wiring + Integration | 4/6 | In Progress | — |
+| 4. Agent Wiring + Integration | 5/6 | In Progress | — |
