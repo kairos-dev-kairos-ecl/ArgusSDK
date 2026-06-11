@@ -1,0 +1,80 @@
+# argus-agent sample configuration
+# =================================
+# Loaded by argus-agent via --config (or ./agent.yaml / /etc/argus-agent/agent.yaml).
+# Every value can be overridden by an ARGUS_SDK_* environment variable, e.g.
+#   ARGUS_SDK_AGENT_GROUP_ID=grp-123   overrides agent.group_id
+# Nested keys use underscores: ARGUS_SDK_OBSERVABILITY_ADDR, etc.
+
+agent:
+  # GroupID is issued by the ArgusXDR portal when an Agent Group is created.
+  group_id: "grp-REPLACE-ME"
+  # Human-readable label for this instance (appears in the XDR console).
+  instance_name: "prod-llm-server-01"
+  # "local" (same-host, unix socket) or "remote" (cross-network, TLS mandatory).
+  mode: "remote"
+
+auth:
+  # One-time install token from the portal; consumed at first registration.
+  # Prefer injecting via ARGUS_SDK_AUTH_INSTALL_TOKEN (secret) over committing it.
+  install_token: ""
+  # Populated by XDR after registration; leave empty on first boot.
+  instance_id: ""
+  # Rotating signal-submission credential (API key). Inject via env/secret.
+  credential: ""
+
+ingest:
+  listen:
+    # gRPC listener for local instrumentation libraries (Python/TypeScript SDKs).
+    grpc: "127.0.0.1:5002"
+    # Optional unix socket (ignored on Windows).
+    unix: ""
+
+# Write-ahead buffer for at-least-once delivery across restarts / outages.
+buffer:
+  dir: "/var/lib/argus-agent/buffer"
+  max_segment_bytes: 67108864   # 64 MiB per WAL segment
+  max_total_bytes: 1073741824   # 1 GiB cap before back-pressure
+
+# Default TLS posture for outputs that don't override it. TLS 1.3 is the floor.
+tls:
+  enabled: true
+  min_version: "1.3"
+  ca_cert: ""   # path to a custom CA PEM; empty = system roots
+
+# One or more output connectors. At least one is required.
+outputs:
+  # Mode 1: native ArgusXDR ingest over gRPC (proto wire format; OCSF ignored).
+  - name: "argus-xdr"
+    type: "argusxdr"
+    endpoint: "xdr-ingest.example.com:443"
+    ocsf: false
+    tls:
+      enabled: true
+      min_version: "1.3"
+    auth:
+      # Per-RPC API key sent as x-argus-api-key.
+      api_key: "${ARGUS_SDK_XDR_API_KEY}"
+
+  # Mode 2 example: Kafka with OCSF translation enabled.
+  - name: "kafka-siem"
+    type: "kafka"
+    endpoint: "broker-1:9093,broker-2:9093"
+    ocsf: true
+    tls:
+      enabled: true
+      min_version: "1.3"
+    # Connector-specific keys are passed through verbatim.
+    topic: "argus.signals"
+
+# Operational HTTP surface: liveness, readiness, and Prometheus metrics.
+observability:
+  # Set to true to disable the server entirely.
+  disabled: false
+  # Bind address. The code default is 127.0.0.1:9090 (loopback) for bare-metal.
+  # In containers/Kubernetes, bind 0.0.0.0 so the kubelet can reach the probes
+  # at the pod IP.
+  addr: "0.0.0.0:9090"
+
+logging:
+  level: "info"     # debug | info | warn | error
+  format: "json"    # json | console

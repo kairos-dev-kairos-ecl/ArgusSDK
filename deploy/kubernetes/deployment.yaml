@@ -1,0 +1,130 @@
+# Minimal Kubernetes deployment for argus-agent.
+# Apply with: kubectl apply -f deploy/kubernetes/deployment.yaml
+#
+# The agent.yaml below is a starting point — move secrets (install_token,
+# credential, api keys) into a Secret and mount/inject them rather than baking
+# them into this ConfigMap.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argus-agent-config
+  labels:
+    app: argus-agent
+data:
+  agent.yaml: |
+    agent:
+      group_id: "grp-REPLACE-ME"
+      instance_name: "k8s-agent"
+      mode: "remote"
+    auth:
+      install_token: ""   # inject via ARGUS_SDK_AUTH_INSTALL_TOKEN from a Secret
+      instance_id: ""
+      credential: ""      # inject via ARGUS_SDK_AUTH_CREDENTIAL from a Secret
+    ingest:
+      listen:
+        grpc: "0.0.0.0:5002"
+    buffer:
+      dir: "/var/lib/argus-agent/buffer"
+      max_segment_bytes: 67108864
+      max_total_bytes: 1073741824
+    tls:
+      enabled: true
+      min_version: "1.3"
+    outputs:
+      - name: "argus-xdr"
+        type: "argusxdr"
+        endpoint: "xdr-ingest.example.com:443"
+        ocsf: false
+        tls:
+          enabled: true
+          min_version: "1.3"
+        auth:
+          api_key: "${ARGUS_SDK_XDR_API_KEY}"
+    observability:
+      disabled: false
+      # Must bind 0.0.0.0 so the kubelet can reach the probes at the pod IP.
+      addr: "0.0.0.0:9090"
+    logging:
+      level: "info"
+      format: "json"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argus-agent
+  labels:
+    app: argus-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argus-agent
+  template:
+    metadata:
+      labels:
+        app: argus-agent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532   # distroless nonroot uid
+      containers:
+        - name: argus-agent
+          image: argus-agent:latest   # replace with your registry/tag
+          args: ["--config", "/etc/argus-agent/agent.yaml"]
+          ports:
+            - name: ingest
+              containerPort: 5002
+            - name: observability
+              containerPort: 9090
+          env:
+            # Secrets injected from a Kubernetes Secret (create separately).
+            - name: ARGUS_SDK_AUTH_INSTALL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: argus-agent-secrets
+                  key: install_token
+                  optional: true
+            - name: ARGUS_SDK_AUTH_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: argus-agent-secrets
+                  key: credential
+                  optional: true
+            - name: ARGUS_SDK_XDR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: argus-agent-secrets
+                  key: xdr_api_key
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: observability
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: observability
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/argus-agent
+              readOnly: true
+            - name: buffer
+              mountPath: /var/lib/argus-agent/buffer
+      volumes:
+        - name: config
+          configMap:
+            name: argus-agent-config
+        - name: buffer
+          emptyDir: {}
