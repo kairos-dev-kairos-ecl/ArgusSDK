@@ -6,8 +6,8 @@ current_phase: 04
 current_plan: "06"
 status: complete
 stopped_at: "04-06 complete — Kafka+Elastic testcontainers integration tests, Splunk HEC env-gated smoke, GitHub Actions CI (build/vet/race/integration), Docker-free e2e smoke. SC-9, SC-10, SC-11, SC-12 satisfied. Phase 4 ALL PLANS DONE."
-last_updated: "2026-06-11T14:00:00Z"
-last_activity: 2026-06-11
+last_updated: "2026-06-12T00:00:00Z"
+last_activity: 2026-06-12
 progress:
   total_phases: 3
   completed_phases: 3
@@ -97,6 +97,12 @@ None — all 16 plans complete.
 - stop() waits for ingest loop via sync.WaitGroup before Flush — guarantees in-flight batches are enqueued or buffered
 - shutdownTimeout=30s for buffer.Flush matches DefaultDispatchConfig.ShutdownTimeout
 - euc collector wired with NewNoopOSCollector as cross-platform seam in start(); real OSCollector deferred
+
+## Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260611-vg2 | Operability quick-wins — observability HTTP server (/healthz, /readyz, /metrics) + deploy artifacts (Dockerfile, sample agent.yaml, k8s Deployment) | 2026-06-12 | 92d8c41 | [260611-vg2-agent-observability-deploy](../../quick/260611-vg2-agent-observability-deploy/) |
 
 ## Session Continuity
 
