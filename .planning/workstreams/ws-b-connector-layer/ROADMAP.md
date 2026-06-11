@@ -115,7 +115,7 @@ no new runtime deps for connector bodies.
 
 Plans:
 - [x] 04-01-PLAN.md — Connector factory (Type→typed Config→Connector) + crypto/rand BatchID
-- [ ] 04-02-PLAN.md — syslog connector: CEF over TCP/TLS 1.3
+- [x] 04-02-PLAN.md — syslog connector: CEF over TCP/TLS 1.3
 - [ ] 04-03-PLAN.md — argusxdr connector: gRPC IngestBatch + TLS + API-key creds
 - [ ] 04-04-PLAN.md — LLM gRPC collector + EUC Observation→Signal collector
 - [ ] 04-05-PLAN.md — agent start()/stop() wiring: registry, dispatcher, buffer drain, ingest loop, registration seam
@@ -127,4 +127,4 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. Connector Layer | 6/6 | Complete | 2026-05-28 |
 | 3. Review Remediation | 4/4 | Complete | 2026-06-10 |
-| 4. Agent Wiring + Integration | 1/6 | In Progress | — |
+| 4. Agent Wiring + Integration | 2/6 | In Progress | — |
