@@ -25,13 +25,14 @@ import (
 // Config is the top-level agent configuration, loaded from YAML via Viper and
 // optionally overridden by ARGUS_SDK_* environment variables.
 type Config struct {
-	Agent   AgentConfig   `mapstructure:"agent"`
-	Auth    AuthConfig    `mapstructure:"auth"`
-	Ingest  IngestConfig  `mapstructure:"ingest"`
-	Buffer  buffer.Config `mapstructure:"buffer"`
-	Outputs []OutputConfig `mapstructure:"outputs"`
-	TLS     TLSConfig     `mapstructure:"tls"`
-	Logging LoggingConfig `mapstructure:"logging"`
+	Agent         AgentConfig         `mapstructure:"agent"`
+	Auth          AuthConfig          `mapstructure:"auth"`
+	Ingest        IngestConfig        `mapstructure:"ingest"`
+	Buffer        buffer.Config       `mapstructure:"buffer"`
+	Outputs       []OutputConfig      `mapstructure:"outputs"`
+	TLS           TLSConfig           `mapstructure:"tls"`
+	Logging       LoggingConfig       `mapstructure:"logging"`
+	Observability ObservabilityConfig `mapstructure:"observability"`
 }
 
 // AgentConfig holds agent identity settings.
@@ -99,6 +100,10 @@ type Agent struct {
 
 	// registry holds all connected output connectors.
 	registry *connector.ConnectorRegistry
+
+	// obs is the operational HTTP server (/healthz, /readyz, /metrics).
+	// nil when observability is disabled in config.
+	obs *obsServer
 
 	// instanceID is resolved once at start() via ensureInstance.
 	instanceID string
@@ -235,6 +240,21 @@ func (a *Agent) start(ctx context.Context) error {
 		return fmt.Errorf("start: buffer start: %w", err)
 	}
 
+	// 4b. Start the observability server (liveness up immediately, readiness
+	// gated until startup completes). Disabled via config.observability.disabled.
+	if !a.cfg.Observability.Disabled {
+		a.obs = newObsServer(a.cfg.Observability.Addr, func() map[string]uint64 {
+			if a.dispatcher == nil {
+				return nil
+			}
+			return a.dispatcher.Stats()
+		}, a.logger)
+		a.obs.setReady(false)
+		if err := a.obs.start(); err != nil {
+			return fmt.Errorf("start: observability: %w", err)
+		}
+	}
+
 	// 5. Build collectors from config.
 	// LLM gRPC collector — always started when a GRPC listen address is configured.
 	if a.cfg.Ingest.Listen.GRPC != "" {
@@ -249,7 +269,7 @@ func (a *Agent) start(ctx context.Context) error {
 	// A future plan will wire a real OSCollector on Linux/macOS/Windows.
 	eucCfg := euc.Config{
 		AppID: a.cfg.Agent.GroupID, // populated from agent identity
-		Env:   a.cfg.Agent.Mode,   // best-effort env tag from agent mode
+		Env:   a.cfg.Agent.Mode,    // best-effort env tag from agent mode
 	}
 	a.collectors = append(a.collectors, euc.New(eucCfg, euc.NewNoopOSCollector()))
 
@@ -263,6 +283,11 @@ func (a *Agent) start(ctx context.Context) error {
 		if err := c.Start(ctx, a.ingestCh); err != nil {
 			return fmt.Errorf("start: collector %q: %w", c.Name(), err)
 		}
+	}
+
+	// All connectors are connected and collectors are running — signal readiness.
+	if a.obs != nil {
+		a.obs.setReady(true)
 	}
 
 	a.logger.Info("argus-agent started",
@@ -347,6 +372,17 @@ func (a *Agent) deliver(ctx context.Context, b *connector.SignalBatch) error {
 
 // stop drains in-flight work and closes all components.
 func (a *Agent) stop() error {
+	// 0. Flip readiness off and shut the observability server down first so probes
+	// see "not ready" immediately and load balancers stop routing during drain.
+	if a.obs != nil {
+		a.obs.setReady(false)
+		obsCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := a.obs.stop(obsCtx); err != nil {
+			a.logger.Warn("observability server shutdown error", zap.Error(err))
+		}
+		cancel()
+	}
+
 	// 1. Cancel the agent context so collectors and the buffer drain loop exit.
 	if a.cancel != nil {
 		a.cancel()
