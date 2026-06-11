@@ -26,6 +26,18 @@ type SignalBatch struct {
 	Signals    []signal.Signal
 	ReceivedAt time.Time
 
+	// AppID is the application identifier sourced from the originating
+	// signal.Batch.AppID. It is populated by the agent ingest loop and consumed
+	// only by the argusxdr connector (which maps it to the proto AppId field).
+	// kafka, splunk_hec, elastic, and syslog connectors do not read this field.
+	AppID string
+
+	// Env is the deployment environment label (e.g. "dev", "staging", "prod")
+	// sourced from signal.Batch.Env. Populated by the agent ingest loop;
+	// consumed only by the argusxdr connector (proto Env field).
+	// kafka, splunk_hec, elastic, and syslog connectors do not read this field.
+	Env string
+
 	// UseOCSF instructs the connector to translate to OCSF before delivery.
 	// Set to true for all non-ArgusXDR connectors (Mode 2).
 	UseOCSF bool
