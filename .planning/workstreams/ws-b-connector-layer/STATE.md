@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
 current_phase: 04
-current_plan: "03"
+current_plan: "04"
 status: in-progress
-stopped_at: "04-02 complete — syslog CEF/TCP/TLS connector implemented; 10 tests pass; SC-7 done. Ready for 04-03 (argusxdr gRPC)."
-last_updated: "2026-06-11T13:09:00Z"
+stopped_at: "04-03 complete — argusxdr gRPC IngestBatch connector implemented; 7 tests pass; SC-8 done. Ready for 04-04 (LLM gRPC + EUC collectors)."
+last_updated: "2026-06-11T14:10:00Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 16
-  completed_plans: 12
-  percent: 75
+  completed_plans: 13
+  percent: 81
 ---
 
 # WS-B Connector Layer — State
@@ -21,9 +21,9 @@ progress:
 ## Current Position
 
 Phase: 04 (agent-wiring) — IN PROGRESS
-**Status:** 2/6 plans complete
+**Status:** 3/6 plans complete
 **Last Activity:** 2026-06-11
-**Last Activity Description:** 04-02 syslog CEF connector — Connect (TCP/TLS/UDP), buildCEF with severity map + injection sanitisation, Send with delivery contract (nil-conn + write-error → failed ack); 10 tests pass; SC-7 satisfied.
+**Last Activity Description:** 04-03 argusxdr gRPC IngestBatch — Connect with TLS 1.3 + per-RPC API-key creds, Send with proto marshal via ToProto, InstanceID/GroupID in metadata, UseOCSF ignored, failed ack on gRPC error; 7 tests pass via bufconn; SC-8 satisfied.
 
 ## Plans Completed
 
@@ -41,6 +41,7 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 | 03-04 | dryrun index alignment + phase-exit gate (F8, SC-12) | 5b9578d | done |
 | 04-01 | Connector factory + BatchID generator | c1fb655 | done |
 | 04-02 | syslog CEF over TCP/TLS 1.3 | e3d33fd | done |
+| 04-03 | argusxdr gRPC IngestBatch | 5576dfe | done |
 
 ## Plans Remaining
 
@@ -83,10 +84,14 @@ Phase: 04 (agent-wiring) — IN PROGRESS
 - syslog TLS: ServerName derived from host part of server address after NewTLSConfig — required by Go TLS client when dialing by IP, not InsecureSkipVerify
 - buildCEF sanitises pipe (→ /) and newlines in field values — prevents CEF header injection (T-04-05)
 - Send: abort-on-first-write-error with signal index in error message (locked decision 9)
+- argusxdr apiKeyCreds.RequireTransportSecurity returns true when TLS enabled — prevents API key over cleartext (T-04-07)
+- argusxdr Health probes with empty IngestBatch{BatchId:"health-check"} — lightweight, no signal marshalling
+- argusxdr maxBatchSize defaults to 500 if unset; chunking sequential abort-on-first-failure (locked decision 9)
+- argusxdr UseOCSF silently ignored — always uses proto wire format (locked decision 5, T-04-10)
 
 ## Session Continuity
 
-**Stopped At:** 04-02 complete — syslog CEF/TLS connector implemented. Next: 04-03 argusxdr gRPC IngestBatch.
+**Stopped At:** 04-03 complete — argusxdr gRPC IngestBatch connector implemented. Next: 04-04 LLM gRPC collector + EUC collector.
 **Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
 
