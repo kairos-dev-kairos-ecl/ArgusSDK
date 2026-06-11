@@ -14,6 +14,10 @@ package euc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"time"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/collector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/pkg/signal"
@@ -94,7 +98,32 @@ func (c *Collector) Start(ctx context.Context, out chan<- signal.Batch) error {
 	return nil
 }
 
+// observationContext is the structure encoded as ContextJSON on each EUC signal.
+// It captures the network-observable fields relevant to Shadow AI detection.
+// Per T-04-14: intentional capture for Shadow AI observability; no general capture.
+type observationContext struct {
+	ConnectedHost string `json:"connected_host"`
+	LocalPort     int    `json:"local_port"`
+	IsLocal       bool   `json:"is_local"`
+	ProcessName   string `json:"process_name"`
+	Username      string `json:"username"`
+}
+
+// generateSignalID returns a 16-byte random hex string suitable for use as a
+// SignalID. It avoids adding a ULID dependency as per the locked decision.
+func generateSignalID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // fanOut converts Observations to signal.Batch and sends them on out.
+// Each Observation produces exactly one signal.Batch with one signal.Signal.
+//
+// Layer choice: L9APIGateway is correct for EUC signals — these observations
+// sit at the network/gateway boundary between a user process and an AI API
+// (or local inference daemon), which maps to the API Gateway layer in the
+// 10-layer LLM taxonomy.
 func (c *Collector) fanOut(ctx context.Context, obs <-chan Observation, out chan<- signal.Batch) {
 	for {
 		select {
@@ -104,14 +133,52 @@ func (c *Collector) fanOut(ctx context.Context, obs <-chan Observation, out chan
 			if !ok {
 				return
 			}
-			_ = o // TODO: build signal.Signal from Observation, emit batch
+
+			// Derive category from observation type.
+			category := "euc.ai_access"
+			if o.IsLocal {
+				category = "euc.local_inference"
+			}
+
+			// Marshal observation metadata as ContextJSON.
+			// T-04-14: intentional connection metadata capture for Shadow AI observability.
+			ctxData := observationContext{
+				ConnectedHost: o.ConnectedHost,
+				LocalPort:     o.LocalPort,
+				IsLocal:       o.IsLocal,
+				ProcessName:   o.ProcessName,
+				Username:      o.Username,
+			}
+			ctxJSON, _ := json.Marshal(ctxData)
+
+			sig := signal.Signal{
+				SignalID:    generateSignalID(),
+				Layer:       signal.L9APIGateway,
+				Category:    category,
+				Severity:    signal.SeverityInfo,
+				AppID:       c.cfg.AppID,
+				Env:         c.cfg.Env,
+				Timestamp:   time.Now(),
+				ContextJSON: ctxJSON,
+			}
+
+			batch := signal.Batch{
+				AppID:   c.cfg.AppID,
+				Env:     c.cfg.Env,
+				Signals: []signal.Signal{sig},
+			}
+
+			select {
+			case out <- batch:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
 
 // Health returns nil if the OS collector is running.
 func (c *Collector) Health(ctx context.Context) error {
-	// TODO: delegate to impl if it exposes a Health method
 	return nil
 }
 
