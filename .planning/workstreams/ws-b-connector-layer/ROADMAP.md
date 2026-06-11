@@ -114,7 +114,7 @@ no new runtime deps for connector bodies.
 **Plans:** 6 plans across 3 waves (wave 1: 04-01 ∥ 04-02 ∥ 04-03 ∥ 04-04; wave 2: 04-05 after wave 1; wave 3: 04-06 after 04-05)
 
 Plans:
-- [ ] 04-01-PLAN.md — Connector factory (Type→typed Config→Connector) + crypto/rand BatchID
+- [x] 04-01-PLAN.md — Connector factory (Type→typed Config→Connector) + crypto/rand BatchID
 - [ ] 04-02-PLAN.md — syslog connector: CEF over TCP/TLS 1.3
 - [ ] 04-03-PLAN.md — argusxdr connector: gRPC IngestBatch + TLS + API-key creds
 - [ ] 04-04-PLAN.md — LLM gRPC collector + EUC Observation→Signal collector
@@ -127,4 +127,4 @@ Plans:
 |-------|----------------|--------|-----------|
 | 2. Connector Layer | 6/6 | Complete | 2026-05-28 |
 | 3. Review Remediation | 4/4 | Complete | 2026-06-10 |
-| 4. Agent Wiring + Integration | 0/6 | Planned | — |
+| 4. Agent Wiring + Integration | 1/6 | In Progress | — |

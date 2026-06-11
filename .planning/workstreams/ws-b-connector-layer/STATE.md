@@ -3,27 +3,27 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
 current_phase: 04
-current_plan: N/A
-status: planned
-stopped_at: "Phase 4 (agent wiring + integration hardening) planned — 6 plans across 3 waves, plan-checker PASS (1 revision cycle: fixed argusxdr proto-contract errors B1/B2 + per-target UseOCSF N5). Ready for /gsd:execute-phase 04."
-last_updated: "2026-06-11T00:00:00Z"
+current_plan: "02"
+status: in-progress
+stopped_at: "04-01 complete — connector factory (Build) + NewBatchID implemented, all tests pass. Ready for 04-02 (syslog CEF/TLS)."
+last_updated: "2026-06-11T06:54:00Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 16
-  completed_plans: 10
-  percent: 62
+  completed_plans: 11
+  percent: 69
 ---
 
 # WS-B Connector Layer — State
 
 ## Current Position
 
-Phase: 03 (review-remediation) — COMPLETE
-**Status:** 4/4 plans complete — PHASE COMPLETE
-**Last Activity:** 2026-06-10
-**Last Activity Description:** 03-04 dryrun alignment + phase-exit gate — F8 (per-signal Map loop, nil-padded events slice), TestRun_MapperErrorMidBatch_IndexAlignment passes, go test ./... all green, go vet ./... clean, go build ./... clean. All 16 findings closed; F17 accepted/deferred.
+Phase: 04 (agent-wiring) — IN PROGRESS
+**Status:** 1/6 plans complete
+**Last Activity:** 2026-06-11
+**Last Activity Description:** 04-01 connector factory + BatchID — factory.Build() for kafka/splunk_hec/elastic/syslog/argusxdr; NewBatchID() with monotonic within-ms ordering; mapstructure promoted to direct dep; no agent import cycle; go build/vet/test all green.
 
 ## Plans Completed
 
@@ -39,10 +39,17 @@ Phase: 03 (review-remediation) — COMPLETE
 | 03-02 | Delivery contract (F6,F7,dispatcher counters) | 39c0b22 | done |
 | 03-03 | Injection + infra fixes (F4,F9,F10,F11,F12,F13,F15,F16,F17) | 73bde20 | done |
 | 03-04 | dryrun index alignment + phase-exit gate (F8, SC-12) | 5b9578d | done |
+| 04-01 | Connector factory + BatchID generator | c1fb655 | done |
 
 ## Plans Remaining
 
-None — all plans complete.
+| Plan | Name | SC |
+|------|------|----|
+| 04-02 | syslog CEF over TCP/TLS 1.3 | SC-7 |
+| 04-03 | argusxdr gRPC IngestBatch | SC-8 |
+| 04-04 | LLM gRPC collector + EUC collector | SC-5,6 |
+| 04-05 | agent start()/stop() wiring + ingest loop + drain | SC-2,3,4,12 |
+| 04-06 | Kafka/Elastic/Splunk testcontainers integration + CI | SC-9,10,11,12 |
 
 ## Decisions Made
 
@@ -70,10 +77,13 @@ None — all plans complete.
 - F13: Map() sets ActivityName="Other" when activityID==99
 - F17: accepted/deferred — NOTE comment at LoggedTime; no behavioral change (clock injection is API-breaking)
 - F8: per-signal mapper.Map loop in dryrun.Run — nil-padded events slice; MapBatch removed from dryrun call site; index correspondence maintained for error attribution and OCSFValid counts
+- Factory in internal/connector/factory (not internal/connector) to break connector↔subpackage import cycle
+- NewBatchID: 6-byte ts + 8-byte rand + 2-byte monotonic seq counter — within-ms ordering guaranteed
+- mapstructure WeaklyTypedInput=true for YAML/env config pipeline type coercion
 
 ## Session Continuity
 
-**Stopped At:** Phase 4 (agent wiring + integration hardening) planned and verified — 6 plans, 3 waves, plan-checker PASS. Ready for /gsd:execute-phase 04 (sequential main-tree execution).
+**Stopped At:** 04-01 complete — connector factory + BatchID implemented. Next: 04-02 syslog CEF/TLS.
 **Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
 
