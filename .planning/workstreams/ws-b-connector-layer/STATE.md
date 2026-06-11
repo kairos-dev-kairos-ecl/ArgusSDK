@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: connector-layer
-current_phase: 03
-current_plan: "03-04"
-status: complete
-stopped_at: "03-04 complete — F8 (dryrun per-signal Map loop, index alignment), full-module go test ./... + go vet ./... + go build ./... all pass (SC-12). Phase 3 review remediation complete — all 16 findings closed, F17 accepted/deferred."
-last_updated: "2026-06-10T11:19:27Z"
-last_activity: 2026-06-10
+current_phase: 04
+current_plan: N/A
+status: planned
+stopped_at: "Phase 4 (agent wiring + integration hardening) planned — 6 plans across 3 waves, plan-checker PASS (1 revision cycle: fixed argusxdr proto-contract errors B1/B2 + per-target UseOCSF N5). Ready for /gsd:execute-phase 04."
+last_updated: "2026-06-11T00:00:00Z"
+last_activity: 2026-06-11
 progress:
-  total_phases: 2
+  total_phases: 3
   completed_phases: 2
-  total_plans: 10
+  total_plans: 16
   completed_plans: 10
-  percent: 100
+  percent: 62
 ---
 
 # WS-B Connector Layer — State
@@ -73,6 +73,19 @@ None — all plans complete.
 
 ## Session Continuity
 
-**Stopped At:** Phase 3 complete — all 4 plans done; all 16 findings closed; F17 accepted/deferred; full-module go test ./... + go vet ./... + go build ./... pass
-**Resume File:** phases/03-review-remediation/03-CONTEXT.md
+**Stopped At:** Phase 4 (agent wiring + integration hardening) planned and verified — 6 plans, 3 waves, plan-checker PASS. Ready for /gsd:execute-phase 04 (sequential main-tree execution).
+**Resume File:** phases/04-agent-wiring/04-CONTEXT.md (locked decisions, file map, SC-1..SC-12)
 **Research:** phases/02-connector-layer/02-RESEARCH.md
+
+## Phase 4 Plan Map (planned 2026-06-11)
+
+| Wave | Plan | Objective | SC |
+|------|------|-----------|----|
+| 1 | 04-01 | Connector factory (Type→typed Config→Connector) + crypto/rand BatchID | SC-1 |
+| 1 | 04-02 | syslog CEF over TCP/TLS 1.3 | SC-7 |
+| 1 | 04-03 | argusxdr gRPC IngestBatch (instance/group via metadata) | SC-8 |
+| 1 | 04-04 | LLM gRPC collector + EUC collector | SC-5, SC-6 |
+| 2 | 04-05 | agent start()/stop() wiring + ingest loop + drain + registration seam | SC-2,3,4,12 |
+| 3 | 04-06 | Kafka/Elastic/Splunk testcontainers integration + CI -race gate + cmd smoke | SC-9,10,11,12 |
+
+Scope decisions (2026-06-11): full agent incl. collectors; testcontainers integration; syslog+argusxdr implemented; -race as CI gate (no local C compiler). Only new dep: testcontainers-go (test-only).
