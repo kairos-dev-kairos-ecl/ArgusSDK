@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # Job (a): build and vet — compiles all packages including cmd/argus-agent.
+  build-vet:
+    name: Build + Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Vet (integration-tagged files)
+        run: go vet -tags=integration ./internal/connector/kafka/ ./internal/connector/elastic/ ./internal/connector/splunk/
+
+  # Job (b): race detector — authoritative CGO-enabled race gate (SC-11, locked decision 7).
+  # This is the canonical gate for data-race detection; it cannot run on the dev machine
+  # (Windows, no C compiler) but is enforced here on every push/PR.
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Unit tests with race detector
+        run: go test -race ./... -count=1 -timeout 300s
+
+  # Job (c): integration tests — runs make test-int with Docker available on ubuntu-latest.
+  # testcontainers-go will t.Skip gracefully if Docker is not functional, but on
+  # ubuntu-latest the Docker daemon is always present.
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Run integration tests
+        run: make test-int
+        timeout-minutes: 15
