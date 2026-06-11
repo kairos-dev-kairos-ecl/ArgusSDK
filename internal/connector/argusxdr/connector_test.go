@@ -156,6 +156,8 @@ func TestSend_HappyPath(t *testing.T) {
 		BatchID:    "batch-test-001",
 		InstanceID: "inst-001",
 		GroupID:    "grp-001",
+		AppID:      "test-app",
+		Env:        "test-env",
 		Signals: []signal.Signal{
 			{SignalID: "sig-1", Layer: signal.L9APIGateway, Severity: signal.SeverityHigh},
 			{SignalID: "sig-2", Layer: signal.L8Agents, Severity: signal.SeverityMedium},
@@ -192,13 +194,13 @@ func TestSend_HappyPath(t *testing.T) {
 		t.Errorf("expected 2 signals in proto batch, got %d", len(fake.receivedBatch.Signals))
 	}
 
-	// Verify AppId/Env come from the batch fields (not Signals[0].AppID which is empty)
-	// batch has no AppID/Env set since 04-05 adds those fields — they will be ""
-	if fake.receivedBatch.AppId != "" {
-		t.Errorf("expected proto AppId to be empty (no AppID on connector.SignalBatch yet), got %q", fake.receivedBatch.AppId)
+	// Verify AppId/Env are propagated from connector.SignalBatch fields (SC-8).
+	// Signals[0].AppID is intentionally empty — signal.FromProto does not set it.
+	if fake.receivedBatch.AppId != "test-app" {
+		t.Errorf("expected proto AppId=%q, got %q", "test-app", fake.receivedBatch.AppId)
 	}
-	if fake.receivedBatch.Env != "" {
-		t.Errorf("expected proto Env to be empty (no Env on connector.SignalBatch yet), got %q", fake.receivedBatch.Env)
+	if fake.receivedBatch.Env != "test-env" {
+		t.Errorf("expected proto Env=%q, got %q", "test-env", fake.receivedBatch.Env)
 	}
 
 	// Verify InstanceID and GroupID are in the incoming metadata, NOT in the proto body

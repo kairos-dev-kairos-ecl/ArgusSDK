@@ -153,12 +153,11 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 	}
 
 	// Reconstruct a signal.Batch from the connector.SignalBatch.
-	// AppID and Env are intentionally sourced from batch.AppID/batch.Env (added by 04-05);
-	// they will be empty strings until 04-05 populates them — that is correct behaviour here.
-	// NEVER read batch.Signals[0].AppID; signal.FromProto leaves that field empty by design.
+	// AppID/Env come from batch.AppID/batch.Env (populated by the agent ingest loop, plan 04-05).
+	// NEVER read batch.Signals[0].AppID — signal.FromProto intentionally leaves it empty.
 	sigBatch := signal.Batch{
-		// AppID and Env: connector.SignalBatch does not have these fields yet (04-05 adds them).
-		// We leave them as empty strings to match the current struct definition.
+		AppID:   batch.AppID,
+		Env:     batch.Env,
 		Signals: batch.Signals,
 	}
 
@@ -192,8 +191,9 @@ func (c *Connector) Send(ctx context.Context, batch *connector.SignalBatch) (*co
 
 // sendChunk performs a single IngestBatch RPC for the supplied signal slice.
 func (c *Connector) sendChunk(ctx context.Context, batch *connector.SignalBatch, signals []signal.Signal, batchID string) (*connector.DeliveryAck, error) {
-	// Build proto batch — AppID/Env are "" until 04-05 adds those fields to connector.SignalBatch.
-	protoBatch := signal.Batch{Signals: signals}.ToProto(batchID, sdkVersion)
+	// Build proto batch sourcing AppID/Env from the connector.SignalBatch fields
+	// populated by the agent ingest loop (plan 04-05, connector.SignalBatch.AppID/Env).
+	protoBatch := signal.Batch{AppID: batch.AppID, Env: batch.Env, Signals: signals}.ToProto(batchID, sdkVersion)
 
 	// Attach InstanceID and GroupID as per-RPC metadata (T-04-11).
 	// The proto SignalBatch has no InstanceId/GroupId fields — they are ONLY sent here.
