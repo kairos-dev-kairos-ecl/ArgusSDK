@@ -76,6 +76,15 @@ cleanly off-platform.
 
 **Requirements:** R-61, R-62, R-63, R-64, R-65
 
+**Plans:** 5 plans across 3 waves (plan-checked + revised 2026-06-12)
+
+Plans:
+- [ ] 06-00-PLAN.md — shared tag-free netcommon.go (matchHost/matchPort + local-inference-port helper) [Wave 0]
+- [ ] 06-01-PLAN.md — Linux eBPF observer (cilium/ebpf, precompiled bpf2go object, no cgo) [Wave 1]
+- [ ] 06-02-PLAN.md — Windows ETW observer (golang-etw, Kernel-Network provider) [Wave 1]
+- [ ] 06-03-PLAN.md — macOS no-root connection sampler (gopsutil); full NetExt deferred [Wave 1]
+- [ ] 06-04-PLAN.md — build-tag-selected NewOSCollector + agent wiring + cross-compile/isolation CI [Wave 2]
+
 ### Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup
 **Goal:** Close the correctness, operability, and documentation gaps so v1.0 is a
 clean cut: the repo is honest about its own state, OCSF output is complete for
@@ -94,3 +103,11 @@ release on a real runner.
   7. A milestone-level record (top-level roadmap or `.planning/WORKSTREAMS.md`) ties WS-A/WS-B/WS-C together for the v1.0 release.
 
 **Requirements:** R-71, R-72, R-73, R-74, R-75, R-76, R-77
+
+**Plans:** 4 plans across 2 waves (plan-checked + revised 2026-06-12)
+
+Plans:
+- [ ] 07-01-PLAN.md — OCSF fidelity: injectable clock + web_resources/databucket first-class + honest URL [Wave 1]
+- [ ] 07-02-PLAN.md — bounded SIGHUP hot-reload (EUC watch list + log level) [Wave 1]
+- [ ] 07-03-PLAN.md — sample-config consolidation + buffer mapstructure tags + README sync + Makefile + milestone record [Wave 2]
+- [ ] 07-04-PLAN.md — CI completeness (build/vet/race/integration + cross-compile/isolation matrix) [Wave 1/2]
