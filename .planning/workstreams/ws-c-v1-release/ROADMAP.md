@@ -15,7 +15,7 @@ both complete.
 
 ## Phases
 
-- [ ] **Phase 5: XDR Mode-1 Registration & Credential Lifecycle**
+- [x] **Phase 5: XDR Mode-1 Registration & Credential Lifecycle** (complete 2026-06-12)
 - [ ] **Phase 6: EUC OS Collectors — Linux eBPF + Windows ETW/WFP + macOS Network Extension**
 - [ ] **Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup**
 
@@ -48,8 +48,8 @@ simplified path.
 **Plans:** 2 plans across 2 waves (plan-checked + revised 2026-06-12)
 
 Plans:
-- [ ] 05-01-PLAN.md — auth HTTP client: remote Registrar + CredentialRefresher (TLS 1.3, stdlib net/http) + in-process mock XDR + tests
-- [ ] 05-02-PLAN.md — encrypted Identity persistence + AgentConfig.xdr_endpoint + mode-aware registrar + resolveIdentity wiring + Agent.RefreshCredential + mock-XDR integration tests
+- [x] 05-01-PLAN.md — auth HTTP client: remote Registrar + CredentialRefresher (TLS 1.3, stdlib net/http) + in-process mock XDR + tests
+- [x] 05-02-PLAN.md — encrypted Identity persistence + AgentConfig.xdr_endpoint + mode-aware registrar + resolveIdentity wiring + Agent.RefreshCredential + mock-XDR integration tests
 
 ### Phase 6: EUC OS Collectors — Linux eBPF + Windows ETW/WFP + macOS Network Extension
 **Goal:** Implement real Shadow-AI capture behind the existing `euc.OSCollector`

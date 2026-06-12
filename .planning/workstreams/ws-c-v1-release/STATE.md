@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: v1-release
-current_phase: 05
+current_phase: 06
 current_plan: null
-status: planned
-stopped_at: "All three phases PLANNED + plan-checked + revised. Phase 5 (2 plans), Phase 6 (5 plans), Phase 7 (4 plans). Ready to execute Phase 5 first (/gsd-execute-phase 05)."
+status: in_progress
+stopped_at: "Phase 5 complete (2026-06-12). XDR Mode-1 registration: remoteRegistrar/remoteCredentialRefresher TLS 1.3, encrypted Identity persistence (AES-256-GCM), AgentConfig.XDREndpoint, resolveIdentity, Agent.RefreshCredential. Verification PASSED (45 tests). Next: Phase 6 EUC OS Collectors."
 last_updated: "2026-06-12T00:00:00Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 11
-  completed_plans: 0
-  percent: 0
+  completed_plans: 2
+  percent: 18
 ---
 
 # WS-C v1.0 Release Hardening — State
@@ -31,8 +31,8 @@ OS collectors; XDR registration built to contract + in-process mock.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 5 | XDR Mode-1 Registration & Credential Lifecycle | planning |
-| 6 | EUC OS Collectors (Linux/Windows/macOS) | pending |
+| 5 | XDR Mode-1 Registration & Credential Lifecycle | complete |
+| 6 | EUC OS Collectors (Linux/Windows/macOS) | in_progress |
 | 7 | Release Hardening (OCSF/hot-reload/docs/CI) | pending |
 
 ## Decisions Made
