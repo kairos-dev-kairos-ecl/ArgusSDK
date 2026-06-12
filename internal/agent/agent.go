@@ -287,13 +287,14 @@ func (a *Agent) start(ctx context.Context) error {
 		a.collectors = append(a.collectors, llm.New(llmCfg))
 	}
 
-	// EUC collector — started with the noop OS impl (cross-platform seam).
-	// A future plan will wire a real OSCollector on Linux/macOS/Windows.
+	// EUC collector — build-tag-selected OSCollector (eBPF/Linux, ETW/Windows,
+	// sampler/darwin) with the noop as the universal fallback for unprivileged
+	// environments and unsupported targets.
 	eucCfg := euc.Config{
-		AppID: a.cfg.Agent.GroupID, // populated from agent identity
-		Env:   a.cfg.Agent.Mode,    // best-effort env tag from agent mode
+		AppID: a.cfg.Agent.GroupID,
+		Env:   a.cfg.Agent.Mode,
 	}
-	a.collectors = append(a.collectors, euc.New(eucCfg, euc.NewNoopOSCollector()))
+	a.collectors = append(a.collectors, euc.New(eucCfg, euc.NewOSCollector(eucCfg)))
 
 	// 6. Start ingest loop goroutine.
 	a.ingestCh = make(chan pkgsignal.Batch, 256)
