@@ -47,7 +47,61 @@ jobs:
       - name: Unit tests with race detector
         run: go test -race ./... -count=1 -timeout 300s
 
-  # Job (c): integration tests — runs make test-int with Docker available on ubuntu-latest.
+  # Job (c): EUC cross-compile + dep-isolation matrix — proves GOOS=linux/windows/darwin all
+  # build and that heavy platform deps (cilium/ebpf, golang-etw) stay isolated to their
+  # target GOOS, including the committed bpf2go-generated skeleton in package euc (Pitfall 6).
+  euc-cross-compile:
+    name: EUC Cross-Compile + Isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Cross-compile GOOS=linux
+        run: GOOS=linux go build ./...
+
+      - name: Cross-compile GOOS=windows
+        run: GOOS=windows go build ./...
+
+      - name: Cross-compile GOOS=darwin
+        run: GOOS=darwin go build ./...
+
+      - name: Isolation — darwin must not pull cilium/ebpf or golang-etw
+        run: |
+          deps=$(GOOS=darwin go list -deps ./internal/collector/euc/...)
+          if echo "$deps" | grep -q "github.com/cilium/ebpf"; then
+            echo "FAIL: cilium/ebpf leaked into GOOS=darwin build"
+            exit 1
+          fi
+          if echo "$deps" | grep -q "github.com/0xrawsec/golang-etw"; then
+            echo "FAIL: golang-etw leaked into GOOS=darwin build"
+            exit 1
+          fi
+          echo "OK: heavy platform deps absent from GOOS=darwin"
+
+      - name: Isolation — windows must not pull cilium/ebpf
+        run: |
+          deps=$(GOOS=windows go list -deps ./internal/collector/euc/...)
+          if echo "$deps" | grep -q "github.com/cilium/ebpf"; then
+            echo "FAIL: cilium/ebpf leaked into GOOS=windows build"
+            exit 1
+          fi
+          echo "OK: cilium/ebpf absent from GOOS=windows"
+
+      - name: Isolation — linux must not pull golang-etw
+        run: |
+          deps=$(GOOS=linux go list -deps ./internal/collector/euc/...)
+          if echo "$deps" | grep -q "github.com/0xrawsec/golang-etw"; then
+            echo "FAIL: golang-etw leaked into GOOS=linux build"
+            exit 1
+          fi
+          echo "OK: golang-etw absent from GOOS=linux"
+
+  # Job (d): integration tests — runs make test-int with Docker available on ubuntu-latest.
   # testcontainers-go will t.Skip gracefully if Docker is not functional, but on
   # ubuntu-latest the Docker daemon is always present.
   integration:
