@@ -260,7 +260,8 @@ func TestMap_DetectionFinding(t *testing.T) {
 }
 
 // TestMap_HTTPActivity verifies L9APIGateway produces non-nil HttpRequest,
-// HttpResponse, and DstEndpoint.
+// HttpResponse, and DstEndpoint. The no-context case must yield an empty URL —
+// never the signal category (honesty fix for the former s.Category fallback).
 func TestMap_HTTPActivity(t *testing.T) {
 	m := newTestMapper()
 	s := newMinimalSignal(signal.L9APIGateway)
@@ -271,8 +272,12 @@ func TestMap_HTTPActivity(t *testing.T) {
 	if ev.HttpRequest == nil {
 		t.Fatal("HttpRequest is nil")
 	}
-	if ev.HttpRequest.URL == "" {
-		t.Error("HttpRequest.URL is empty")
+	// No context → URL must be empty, never mislabeled as s.Category.
+	if ev.HttpRequest.URL != "" {
+		t.Errorf("HttpRequest.URL = %q, want empty string for no-context signal (must not use s.Category)", ev.HttpRequest.URL)
+	}
+	if ev.HttpRequest.URL == s.Category {
+		t.Errorf("HttpRequest.URL == s.Category %q; URL must never be the signal category", s.Category)
 	}
 	if ev.HttpRequest.Method == "" {
 		t.Error("HttpRequest.Method is empty")
@@ -429,7 +434,8 @@ func TestMap_MapBatch_NonNilForAllLayers(t *testing.T) {
 }
 
 // TestMap_DatastoreActivity_ContextJSON_VectorIndex verifies that L7RAGRetrieval
-// with a vector_index key in ContextJSON stores the value in Unmapped.
+// with a vector_index key in ContextJSON promotes to a first-class Databucket object
+// and does NOT leave a string placeholder in Unmapped.
 func TestMap_DatastoreActivity_ContextJSON_VectorIndex(t *testing.T) {
 	m := newTestMapper()
 	s := newMinimalSignal(signal.L7RAGRetrieval)
@@ -440,13 +446,20 @@ func TestMap_DatastoreActivity_ContextJSON_VectorIndex(t *testing.T) {
 		t.Fatalf("Map() error = %v", err)
 	}
 
-	if got, ok := ev.Unmapped["databucket_name"]; !ok || got != "embeddings-v2" {
-		t.Errorf("Unmapped[databucket_name] = %v, want %q", got, "embeddings-v2")
+	if ev.Databucket == nil {
+		t.Fatal("Databucket is nil; expected first-class Databucket object from vector_index")
+	}
+	if ev.Databucket.Name != "embeddings-v2" {
+		t.Errorf("Databucket.Name = %q, want %q", ev.Databucket.Name, "embeddings-v2")
+	}
+	if _, ok := ev.Unmapped["databucket_name"]; ok {
+		t.Error("Unmapped[databucket_name] must not be set; databucket is now a first-class object")
 	}
 }
 
 // TestMap_WebResources_ContextJSON_ResourceURL verifies that L10Application
-// with a resource_url key in ContextJSON stores the value in Unmapped.
+// with a resource_url key in ContextJSON promotes to a first-class []WebResource
+// and does NOT leave a string placeholder in Unmapped.
 func TestMap_WebResources_ContextJSON_ResourceURL(t *testing.T) {
 	m := newTestMapper()
 	s := newMinimalSignal(signal.L10Application)
@@ -457,8 +470,14 @@ func TestMap_WebResources_ContextJSON_ResourceURL(t *testing.T) {
 		t.Fatalf("Map() error = %v", err)
 	}
 
-	if got, ok := ev.Unmapped["web_resource_url"]; !ok || got != "/api/v1/users" {
-		t.Errorf("Unmapped[web_resource_url] = %v, want %q", got, "/api/v1/users")
+	if len(ev.WebResources) == 0 {
+		t.Fatal("WebResources is empty; expected first-class []WebResource from resource_url")
+	}
+	if ev.WebResources[0].URLString != "/api/v1/users" {
+		t.Errorf("WebResources[0].URLString = %q, want %q", ev.WebResources[0].URLString, "/api/v1/users")
+	}
+	if _, ok := ev.Unmapped["web_resource_url"]; ok {
+		t.Error("Unmapped[web_resource_url] must not be set; web_resources is now a first-class object")
 	}
 }
 
@@ -496,5 +515,131 @@ func TestMap_Activity99SetsActivityName(t *testing.T) {
 	}
 	if ev6.ActivityName != "" {
 		t.Errorf("ActivityName = %q, want %q for non-99 activity_id", ev6.ActivityName, "")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F17: Injectable clock + deterministic Map output (R-71)
+// ---------------------------------------------------------------------------
+
+// TestMap_InjectedClockIsDeterministic verifies that a Mapper with a fixed clock
+// produces an identical LoggedTime on repeated Map calls. Proves Map is now
+// golden-testable (F17 resolved).
+func TestMap_InjectedClockIsDeterministic(t *testing.T) {
+	fixedTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	m := NewMapperWithClock("1.0.0", "test-host", func() time.Time { return fixedTime })
+
+	s := newMinimalSignal(signal.L3Tokenizer)
+
+	ev1, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("first Map() error = %v", err)
+	}
+	ev2, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("second Map() error = %v", err)
+	}
+
+	if !ev1.Metadata.LoggedTime.Equal(fixedTime) {
+		t.Errorf("ev1.Metadata.LoggedTime = %v, want %v", ev1.Metadata.LoggedTime, fixedTime)
+	}
+	if !ev2.Metadata.LoggedTime.Equal(fixedTime) {
+		t.Errorf("ev2.Metadata.LoggedTime = %v, want %v", ev2.Metadata.LoggedTime, fixedTime)
+	}
+	if !ev1.Metadata.LoggedTime.Equal(ev2.Metadata.LoggedTime) {
+		t.Errorf("LoggedTime is non-deterministic: %v != %v", ev1.Metadata.LoggedTime, ev2.Metadata.LoggedTime)
+	}
+}
+
+// TestNewMapper_DefaultClockIsRealTime verifies that NewMapper (the public constructor)
+// still produces a LoggedTime close to time.Now() — the default path is unchanged.
+func TestNewMapper_DefaultClockIsRealTime(t *testing.T) {
+	before := time.Now().UTC()
+	m := NewMapper("1.0.0", "test-host")
+	s := newMinimalSignal(signal.L3Tokenizer)
+	ev, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	after := time.Now().UTC()
+
+	if ev.Metadata.LoggedTime.Before(before) || ev.Metadata.LoggedTime.After(after) {
+		t.Errorf("LoggedTime %v is outside real-time window [%v, %v]", ev.Metadata.LoggedTime, before, after)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R-71: Additional fidelity tests for new first-class objects + honest URL
+// ---------------------------------------------------------------------------
+
+// TestMap_HTTP_URLFromContext verifies that a context url key is used as http_request.url.
+func TestMap_HTTP_URLFromContext(t *testing.T) {
+	m := newTestMapper()
+	s := newMinimalSignal(signal.L9APIGateway)
+	s.ContextJSON = []byte(`{"url":"https://api.example.com/v1/chat","method":"POST","status_code":200}`)
+
+	ev, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if ev.HttpRequest == nil {
+		t.Fatal("HttpRequest is nil")
+	}
+	if ev.HttpRequest.URL != "https://api.example.com/v1/chat" {
+		t.Errorf("HttpRequest.URL = %q, want %q", ev.HttpRequest.URL, "https://api.example.com/v1/chat")
+	}
+}
+
+// TestMap_HTTP_URLNotCategoryWhenAbsent verifies that when no url/target/path is
+// in context, http_request.url is "" — not s.Category.
+func TestMap_HTTP_URLNotCategoryWhenAbsent(t *testing.T) {
+	m := newTestMapper()
+	s := newMinimalSignal(signal.L9APIGateway)
+	s.Category = "api.request" // must NOT appear in the URL
+
+	ev, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if ev.HttpRequest == nil {
+		t.Fatal("HttpRequest is nil")
+	}
+	if ev.HttpRequest.URL == s.Category {
+		t.Errorf("HttpRequest.URL == s.Category %q; URL must never be the signal category", s.Category)
+	}
+	if ev.HttpRequest.URL != "" {
+		t.Errorf("HttpRequest.URL = %q, want empty string when no context URL is derivable", ev.HttpRequest.URL)
+	}
+}
+
+// TestMap_WebResources_OmittedWhenNoURL verifies that a 6001 event with no
+// resource_url in context produces nil/empty WebResources (no placeholder).
+func TestMap_WebResources_OmittedWhenNoURL(t *testing.T) {
+	m := newTestMapper()
+	s := newMinimalSignal(signal.L10Application)
+	// No ContextJSON.
+
+	ev, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if len(ev.WebResources) != 0 {
+		t.Errorf("WebResources should be empty when no resource_url in context, got %v", ev.WebResources)
+	}
+}
+
+// TestMap_Datastore_DatabucketOmittedWhenAbsent verifies that a 6005 event with
+// no vector_index in context produces nil Databucket (no placeholder).
+func TestMap_Datastore_DatabucketOmittedWhenAbsent(t *testing.T) {
+	m := newTestMapper()
+	s := newMinimalSignal(signal.L7RAGRetrieval)
+	// No ContextJSON.
+
+	ev, err := m.Map(s)
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if ev.Databucket != nil {
+		t.Errorf("Databucket should be nil when no vector_index in context, got %+v", ev.Databucket)
 	}
 }

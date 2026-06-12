@@ -130,9 +130,32 @@ type Event struct {
 	// NOTE: actor.agent_uid does NOT exist in the OCSF schema — do not add it
 	Actor *Actor `json:"actor,omitempty"`
 
+	// Web Resources Activity (6001): first-class web_resources object (OCSF v1.3).
+	// Populated from context.resource_url when present; omitted when absent.
+	WebResources []WebResource `json:"web_resources,omitempty"`
+
+	// Datastore Activity (6005): first-class databucket object (OCSF v1.3).
+	// Populated from context.vector_index when present; omitted when absent.
+	Databucket *Databucket `json:"databucket,omitempty"`
+
 	// Raw Argus signal data preserved for analysts.
 	// OCSF canonical key is "unmapped" (NOT "unmapped_data").
 	Unmapped map[string]interface{} `json:"unmapped,omitempty"`
+}
+
+// WebResource is an OCSF v1.3 web_resource object.
+// url_string is the primary field; name is optional.
+type WebResource struct {
+	URLString string `json:"url_string,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+// Databucket is an OCSF v1.3 databucket object used in Datastore Activity.
+// name is the primary field identifying the bucket/index.
+type Databucket struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	UID  string `json:"uid,omitempty"`
 }
 
 // EventMetadata is the required OCSF metadata block.
@@ -253,16 +276,33 @@ type HttpResponse struct {
 // Stateless; a single Mapper instance is safe for concurrent use.
 type Mapper struct {
 	productVersion string
-	agentHostname  string // used to populate device.hostname for system-class events
+	agentHostname  string        // used to populate device.hostname for system-class events
+	clock          func() time.Time // injectable for deterministic tests; defaults to UTC wall time
 }
 
 // NewMapper creates a Mapper. productVersion is embedded in every event's metadata.
 // agentHostname is used to satisfy the host profile device requirement for system-class events.
+// The mapper clock defaults to real UTC wall time; use NewMapperWithClock for tests.
 func NewMapper(productVersion, agentHostname string) *Mapper {
 	if productVersion == "" {
 		productVersion = "dev"
 	}
-	return &Mapper{productVersion: productVersion, agentHostname: agentHostname}
+	return &Mapper{
+		productVersion: productVersion,
+		agentHostname:  agentHostname,
+		clock:          func() time.Time { return time.Now().UTC() },
+	}
+}
+
+// NewMapperWithClock creates a Mapper with an injectable clock. Use in tests to
+// produce deterministic LoggedTime values for golden-test comparisons.
+// If clock is nil, defaults to real UTC wall time.
+func NewMapperWithClock(productVersion, agentHostname string, clock func() time.Time) *Mapper {
+	m := NewMapper(productVersion, agentHostname)
+	if clock != nil {
+		m.clock = clock
+	}
+	return m
 }
 
 // Map converts a single ArgusSDK signal to an OCSF v1.3 Event.
@@ -308,11 +348,8 @@ func (m *Mapper) Map(s signal.Signal) (*Event, error) {
 				Name:       "Argus SDK",
 				Version:    m.productVersion,
 			},
-			UID: s.SignalID,
-			// NOTE(F17): time.Now() makes Map non-deterministic for golden tests.
-			// Accepted/deferred 2026-06-10 review — clock injection is an API change
-			// touching all connectors. See locked decision 5 in 03-03-SUMMARY.md.
-			LoggedTime: time.Now().UTC(),
+			UID:        s.SignalID,
+			LoggedTime: m.clock(),
 		},
 		Actor: &Actor{
 			AppUID:  s.AppID,
@@ -390,17 +427,21 @@ func (m *Mapper) populateClassFields(ev *Event, s signal.Signal) {
 
 	case ClassHTTPActivity:
 		// HTTP Activity (4002): http_request, http_response, dst_endpoint required.
-		// Parse ContextJSON for url, method, and status_code; fall back to defaults if absent.
+		// URL derived from context (url → target → path) in priority order.
+		// When no URL is derivable, url is left empty — never mislabeled as s.Category.
 		ctx := extractCtx(s.ContextJSON)
 
-		url := s.Category // fallback: use category as URL placeholder
+		url := ""     // honest default: no URL known
 		method := "POST"  // fallback default method
 		statusCode := 200 // fallback default status
 
 		if ctx != nil {
-			if v, ok := ctx["url"]; ok {
-				if urlStr, ok := v.(string); ok && urlStr != "" {
-					url = urlStr
+			for _, key := range []string{"url", "target", "path"} {
+				if v, ok := ctx[key]; ok {
+					if urlStr, ok := v.(string); ok && urlStr != "" {
+						url = urlStr
+						break
+					}
 				}
 			}
 			if v, ok := ctx["method"]; ok {
@@ -434,27 +475,25 @@ func (m *Mapper) populateClassFields(ev *Event, s signal.Signal) {
 
 	case ClassDatastoreActivity:
 		// Datastore Activity (6005): actor (set) + src_endpoint + at_least_one of database/databucket/table.
-		// Parse ContextJSON.vector_index → databucket.name stored in Unmapped for now.
-		// TODO: promote to first-class databucket object when OCSF databucket type is added to Event.
+		// context.vector_index → first-class Databucket object (OCSF v1.3).
 		ev.SrcEndpoint = &NetworkEndpoint{SvcName: s.AppID}
 		ctx := extractCtx(s.ContextJSON)
 		if ctx != nil {
 			if v, ok := ctx["vector_index"]; ok {
 				if name, ok := v.(string); ok && name != "" {
-					ev.Unmapped["databucket_name"] = name
+					ev.Databucket = &Databucket{Name: name}
 				}
 			}
 		}
 
 	case ClassWebResourcesActivity:
 		// Web Resources Activity (6001): web_resources required.
-		// Parse ContextJSON for resource_url and store in Unmapped.
-		// Note: web_resources object is deferred pending OCSF extension work.
+		// context.resource_url → first-class []WebResource (OCSF v1.3).
 		ctx := extractCtx(s.ContextJSON)
 		if ctx != nil {
 			if v, ok := ctx["resource_url"]; ok {
 				if urlStr, ok := v.(string); ok && urlStr != "" {
-					ev.Unmapped["web_resource_url"] = urlStr
+					ev.WebResources = []WebResource{{URLString: urlStr}}
 				}
 			}
 		}
