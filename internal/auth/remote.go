@@ -81,8 +81,7 @@ type remoteRegistrar struct {
 
 // NewRemoteRegistrar returns an auth.Registrar that POSTs to baseURL over the
 // supplied httpClient. When httpClient is nil a default is constructed whose
-// Transport uses connector.NewTLSConfig (TLS 1.3 floor, no InsecureSkipVerify)
-// and a 30-second timeout.
+// Transport uses connector.NewTLSConfig (TLS 1.3 floor) and a 30-second timeout.
 func NewRemoteRegistrar(baseURL string, httpClient *http.Client) Registrar {
 	if httpClient == nil {
 		httpClient = defaultHTTPClient()
@@ -125,8 +124,8 @@ type remoteCredentialRefresher struct {
 }
 
 // NewRemoteCredentialRefresher returns an auth.CredentialRefresher that POSTs
-// to baseURL over the supplied httpClient. A nil httpClient gets the same TLS
-// 1.3 default as NewRemoteRegistrar.
+// to baseURL over the supplied httpClient. A nil httpClient gets the TLS 1.3
+// default built by defaultHTTPClient (same as NewRemoteRegistrar).
 func NewRemoteCredentialRefresher(baseURL string, httpClient *http.Client) CredentialRefresher {
 	if httpClient == nil {
 		httpClient = defaultHTTPClient()
@@ -184,7 +183,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, body any, ou
 }
 
 // defaultHTTPClient builds an *http.Client whose Transport enforces TLS 1.3
-// via connector.NewTLSConfig (system roots, no InsecureSkipVerify).
+// via connector.NewTLSConfig with system roots.
 func defaultHTTPClient() *http.Client {
 	tlsCfg, err := connector.NewTLSConfig(connector.TLSClientConfig{})
 	if err != nil {
