@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/auth"
 )
 
 // fakeRegistrar is a test double that returns a canned InstanceID on Register.
@@ -148,5 +150,152 @@ func TestEnsureInstance_FakeRemoteRegistrar(t *testing.T) {
 	}
 	if !remote.called {
 		t.Error("remote registrar should have been called")
+	}
+}
+
+// ─── fakeAuthRegistrar — implements auth.Registrar for adapter tests ──────────
+
+// fakeAuthRegistrar is a test double for auth.Registrar (the auth-package
+// interface, not the agent-seam Registrar).
+type fakeAuthRegistrar struct {
+	resp  *auth.RegistrationResponse
+	err   error
+	calls int
+}
+
+func (f *fakeAuthRegistrar) Register(_ context.Context, req auth.RegistrationRequest) (*auth.RegistrationResponse, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.resp, nil
+}
+
+// ─── TestSelectRegistrar ──────────────────────────────────────────────────────
+
+// TestSelectRegistrar_LocalMode asserts that selectRegistrar returns a localRegistrar
+// (or equivalent) for mode "local".
+func TestSelectRegistrar_LocalMode(t *testing.T) {
+	cfg := &Config{Agent: AgentConfig{Mode: "local"}}
+	fakeRemote := &fakeAuthRegistrar{}
+	adapter := NewRemoteRegistrarAdapter(fakeRemote, "inst", "v0.0.0")
+
+	r := selectRegistrar(cfg, adapter)
+	// For local mode, selectRegistrar must NOT return the remote adapter.
+	if r == adapter {
+		t.Error("selectRegistrar: mode local must NOT return the remote adapter")
+	}
+	// Verify it IS a localRegistrar by checking its behaviour is deterministic SHA-256.
+	id1, err := r.Register(context.Background(), "tok", "grp")
+	if err != nil {
+		t.Fatalf("Register on local path: %v", err)
+	}
+	id2, err := r.Register(context.Background(), "tok", "grp")
+	if err != nil {
+		t.Fatalf("Register on local path (2nd): %v", err)
+	}
+	if id1 != id2 {
+		t.Error("local path must be deterministic")
+	}
+	// Auth registrar must never have been called.
+	if fakeRemote.calls != 0 {
+		t.Errorf("fakeAuthRegistrar called %d times; expected 0 for local mode", fakeRemote.calls)
+	}
+}
+
+// TestSelectRegistrar_RemoteMode asserts that selectRegistrar returns the supplied
+// remote adapter for mode "remote".
+func TestSelectRegistrar_RemoteMode(t *testing.T) {
+	cfg := &Config{Agent: AgentConfig{Mode: "remote"}}
+	fakeRemote := &fakeAuthRegistrar{resp: &auth.RegistrationResponse{InstanceID: "srv-id", Credential: "cred"}}
+	adapter := NewRemoteRegistrarAdapter(fakeRemote, "inst", "v0.0.0")
+
+	r := selectRegistrar(cfg, adapter)
+	if r != adapter {
+		t.Error("selectRegistrar: mode remote must return the supplied remote adapter")
+	}
+}
+
+// ─── TestRemoteAdapter ────────────────────────────────────────────────────────
+
+// TestRemoteAdapter_HappyPath asserts that the adapter passes the call through
+// to the auth.Registrar and returns the InstanceID; the Credential is accessible
+// via LastCredential().
+func TestRemoteAdapter_HappyPath(t *testing.T) {
+	fakeRemote := &fakeAuthRegistrar{
+		resp: &auth.RegistrationResponse{
+			InstanceID: "srv-uuid-001",
+			Credential: "cred-001",
+		},
+	}
+	adapter := NewRemoteRegistrarAdapter(fakeRemote, "my-instance", "v1.0.0")
+
+	cfg := &Config{
+		Agent: AgentConfig{GroupID: "grp-adapter", Mode: "remote"},
+		Auth:  AuthConfig{InstallToken: "tok-adapter"},
+	}
+
+	gotID, err := ensureInstance(context.Background(), cfg, adapter)
+	if err != nil {
+		t.Fatalf("ensureInstance: %v", err)
+	}
+	if gotID != "srv-uuid-001" {
+		t.Errorf("InstanceID: got %q, want %q", gotID, "srv-uuid-001")
+	}
+	if adapter.LastCredential() != "cred-001" {
+		t.Errorf("Credential: got %q, want %q", adapter.LastCredential(), "cred-001")
+	}
+	if fakeRemote.calls != 1 {
+		t.Errorf("expected exactly 1 auth.Register call, got %d", fakeRemote.calls)
+	}
+}
+
+// TestRemoteAdapter_TokenConsumed asserts that ErrInstallTokenConsumed propagates
+// through ensureInstance and is matchable via errors.Is.
+func TestRemoteAdapter_TokenConsumed(t *testing.T) {
+	fakeRemote := &fakeAuthRegistrar{err: auth.ErrInstallTokenConsumed}
+	adapter := NewRemoteRegistrarAdapter(fakeRemote, "inst", "v1.0.0")
+
+	cfg := &Config{
+		Agent: AgentConfig{GroupID: "grp-consumed", Mode: "remote"},
+		Auth:  AuthConfig{InstallToken: "used-tok"},
+	}
+
+	_, err := ensureInstance(context.Background(), cfg, adapter)
+	if err == nil {
+		t.Fatal("expected error for consumed token, got nil")
+	}
+	if !errors.Is(err, auth.ErrInstallTokenConsumed) {
+		t.Errorf("errors.Is(err, ErrInstallTokenConsumed) = false; err = %v", err)
+	}
+}
+
+// TestRemoteAdapter_ShortCircuit_BothModes asserts that a pre-set
+// cfg.Auth.InstanceID causes ensureInstance to return immediately in BOTH
+// modes — the auth registrar is never called.
+func TestRemoteAdapter_ShortCircuit_BothModes(t *testing.T) {
+	for _, mode := range []string{"local", "remote"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			fakeRemote := &fakeAuthRegistrar{resp: &auth.RegistrationResponse{InstanceID: "should-not-appear"}}
+			adapter := NewRemoteRegistrarAdapter(fakeRemote, "inst", "v1.0.0")
+			r := selectRegistrar(&Config{Agent: AgentConfig{Mode: mode}}, adapter)
+
+			cfg := &Config{
+				Agent: AgentConfig{GroupID: "grp-sc", Mode: mode},
+				Auth:  AuthConfig{InstanceID: "pre-set-id"},
+			}
+
+			got, err := ensureInstance(context.Background(), cfg, r)
+			if err != nil {
+				t.Fatalf("ensureInstance: %v", err)
+			}
+			if got != "pre-set-id" {
+				t.Errorf("expected pre-set id, got %q", got)
+			}
+			if fakeRemote.calls != 0 {
+				t.Errorf("auth registrar must not be called when InstanceID pre-set; got %d calls", fakeRemote.calls)
+			}
+		})
 	}
 }
