@@ -16,7 +16,7 @@ both complete.
 ## Phases
 
 - [x] **Phase 5: XDR Mode-1 Registration & Credential Lifecycle** (complete 2026-06-12)
-- [ ] **Phase 6: EUC OS Collectors — Linux eBPF + Windows ETW/WFP + macOS Network Extension**
+- [x] **Phase 6: EUC OS Collectors — Linux eBPF + Windows ETW/WFP + macOS Network Extension** (complete 2026-06-12)
 - [ ] **Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup**
 
 ## Phase Details
@@ -79,11 +79,11 @@ cleanly off-platform.
 **Plans:** 5 plans across 3 waves (plan-checked + revised 2026-06-12)
 
 Plans:
-- [ ] 06-00-PLAN.md — shared tag-free netcommon.go (matchHost/matchPort + local-inference-port helper) [Wave 0]
-- [ ] 06-01-PLAN.md — Linux eBPF observer (cilium/ebpf, precompiled bpf2go object, no cgo) [Wave 1]
-- [ ] 06-02-PLAN.md — Windows ETW observer (golang-etw, Kernel-Network provider) [Wave 1]
-- [ ] 06-03-PLAN.md — macOS no-root connection sampler (gopsutil); full NetExt deferred [Wave 1]
-- [ ] 06-04-PLAN.md — build-tag-selected NewOSCollector + agent wiring + cross-compile/isolation CI [Wave 2]
+- [x] 06-00-PLAN.md — shared tag-free netcommon.go (matchHost/matchPort + local-inference-port helper) [Wave 0]
+- [x] 06-01-PLAN.md — Linux eBPF observer (cilium/ebpf, precompiled bpf2go object, no cgo) [Wave 1]
+- [x] 06-02-PLAN.md — Windows ETW observer (golang-etw, Kernel-Network provider) [Wave 1]
+- [x] 06-03-PLAN.md — macOS no-root connection sampler (gopsutil); full NetExt deferred [Wave 1]
+- [x] 06-04-PLAN.md — build-tag-selected NewOSCollector + agent wiring + cross-compile/isolation CI [Wave 2]
 
 ### Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup
 **Goal:** Close the correctness, operability, and documentation gaps so v1.0 is a
