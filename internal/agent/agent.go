@@ -13,12 +13,14 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/auth"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/buffer"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/collector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/collector/euc"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/collector/llm"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector/factory"
+	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/secrets"
 	pkgsignal "github.com/kairos-dev-kairos-ecl/ArgusSDK/pkg/signal"
 )
 
@@ -40,6 +42,12 @@ type AgentConfig struct {
 	GroupID      string `mapstructure:"group_id"`
 	InstanceName string `mapstructure:"instance_name"`
 	Mode         string `mapstructure:"mode"` // "local" | "remote"
+
+	// XDREndpoint is the XDR base URL for registration + credential refresh
+	// (e.g. "https://xdr.company.com:8080"). It is required in mode: remote.
+	// This is NOT the per-output signal submission endpoint (cfg.Outputs[i].Endpoint)
+	// — those route signal batches; this endpoint governs instance identity.
+	XDREndpoint string `mapstructure:"xdr_endpoint"`
 }
 
 // AuthConfig holds credential state. InstallToken is consumed once at registration;
@@ -105,8 +113,17 @@ type Agent struct {
 	// nil when observability is disabled in config.
 	obs *obsServer
 
-	// instanceID is resolved once at start() via ensureInstance.
+	// instanceID is resolved once at start() via resolveIdentity.
 	instanceID string
+
+	// store is the secrets.Store used for encrypted identity persistence.
+	// It is non-nil only in mode: remote (mode: local never constructs a store).
+	store *secrets.Store
+
+	// resolveIdentityFn is an injectable seam used by tests to drive registration
+	// against an in-package mock without a live XDR or ARGUS_MASTER_KEY.
+	// When nil, start() calls the default resolveIdentity implementation.
+	resolveIdentityFn func(ctx context.Context) (string, error)
 
 	// ocsfTargets are the connector names that receive OCSF-translated batches
 	// (UseOCSF=true). These are outputs where cfg.Outputs[i].OCSF=true AND
@@ -167,12 +184,17 @@ func (a *Agent) start(ctx context.Context) error {
 		zap.String("mode", a.cfg.Agent.Mode),
 		zap.String("instance_name", a.cfg.Agent.InstanceName))
 
-	// 1. Registration: resolve InstanceID via localRegistrar.
-	id, err := ensureInstance(ctx, a.cfg, &localRegistrar{})
-	if err != nil {
-		return fmt.Errorf("start: %w", err)
+	// 1. Registration: resolve InstanceID (persisted-state-first, mode-aware).
+	var resolveErr error
+	if a.resolveIdentityFn != nil {
+		// Test seam: use the injected resolver (no live XDR, no env var needed).
+		a.instanceID, resolveErr = a.resolveIdentityFn(ctx)
+	} else {
+		a.instanceID, resolveErr = a.resolveIdentity(ctx)
 	}
-	a.instanceID = id
+	if resolveErr != nil {
+		return fmt.Errorf("start: %w", resolveErr)
+	}
 	a.logger.Info("instance identity resolved", zap.String("instance_id", a.instanceID))
 
 	// 2. Build ConnectorRegistry from cfg.Outputs.
@@ -294,6 +316,149 @@ func (a *Agent) start(ctx context.Context) error {
 		zap.String("instance_id", a.instanceID),
 		zap.Int("collectors", len(a.collectors)))
 
+	return nil
+}
+
+// ─── identity resolution ──────────────────────────────────────────────────────
+
+// resolveIdentity resolves the agent's InstanceID using the following precedence:
+//
+//  1. If a persisted state file exists (mode: remote only), load InstanceID + Credential
+//     from the encrypted secrets.Store and reuse them (idempotent restart — no Register call).
+//  2. If cfg.Auth.InstanceID is pre-set, short-circuit registration (and persist in remote mode).
+//  3. Otherwise call the mode-appropriate registrar (ensureInstance), persist on success
+//     (remote mode), and clear the consumed InstallToken.
+//
+// Mode-aware gating (WARNING 4):
+//   - mode: local  → uses localRegistrar; no secrets.Store is constructed; ARGUS_MASTER_KEY not required.
+//   - mode: remote → requires ARGUS_MASTER_KEY (or injected key); NewStore is called here.
+//
+// On ErrInstallTokenConsumed with an existing persisted InstanceID the persisted identity
+// is kept and the error is NOT returned — the stored state takes precedence.
+func (a *Agent) resolveIdentity(ctx context.Context) (string, error) {
+	cfg := a.cfg
+
+	if cfg.Agent.Mode == "remote" {
+		// Remote mode requires an explicit XDR endpoint.
+		if cfg.Agent.XDREndpoint == "" {
+			return "", fmt.Errorf("remote mode requires agent.xdr_endpoint to be set")
+		}
+
+		// Build (or reuse) the secrets store — requires ARGUS_MASTER_KEY.
+		if a.store == nil {
+			store, err := secrets.NewStore(auth.StateFile, nil) // nil → reads ARGUS_MASTER_KEY
+			if err != nil {
+				return "", fmt.Errorf("secrets store: %w", err)
+			}
+			a.store = store
+		}
+
+		// 1. Persisted-state-first: reuse a previously registered InstanceID.
+		existing, ok, err := auth.LoadIdentity(a.store)
+		if err != nil {
+			return "", fmt.Errorf("load persisted identity: %w", err)
+		}
+		if ok {
+			// Reuse persisted InstanceID; update in-memory credential.
+			cfg.Auth.InstanceID = existing.InstanceID
+			cfg.Auth.Credential = existing.Credential
+			return existing.InstanceID, nil
+		}
+
+		// 2. Pre-set InstanceID short-circuits registration (persist for future restarts).
+		if cfg.Auth.InstanceID != "" {
+			id := auth.Identity{
+				GroupID:    cfg.Agent.GroupID,
+				InstanceID: cfg.Auth.InstanceID,
+				Credential: cfg.Auth.Credential,
+			}
+			if saveErr := auth.SaveIdentity(a.store, id); saveErr != nil {
+				a.logger.Warn("failed to persist pre-set identity", zap.Error(saveErr))
+			}
+			return cfg.Auth.InstanceID, nil
+		}
+
+		// 3. Register via remote adapter.
+		innerRegistrar := auth.NewRemoteRegistrar(cfg.Agent.XDREndpoint, nil)
+		adapter := NewRemoteRegistrarAdapter(innerRegistrar, cfg.Agent.InstanceName, agentVersion)
+		instanceID, regErr := ensureInstance(ctx, cfg, adapter)
+		if regErr != nil {
+			// On token-consumed with a persisted identity: keep it (T-05-07 mitigation).
+			// (We already checked ok==false above, so no persisted state exists here.)
+			return "", regErr
+		}
+
+		// Persist the newly registered Identity.
+		id := auth.Identity{
+			GroupID:    cfg.Agent.GroupID,
+			InstanceID: instanceID,
+			Credential: adapter.LastCredential(),
+		}
+		if saveErr := auth.SaveIdentity(a.store, id); saveErr != nil {
+			return "", fmt.Errorf("persist identity: %w", saveErr)
+		}
+		// Clear the consumed install token.
+		cfg.Auth.InstallToken = ""
+		cfg.Auth.Credential = adapter.LastCredential()
+		return instanceID, nil
+	}
+
+	// mode: local — no store, no master key required.
+	// 2. Pre-set InstanceID short-circuits.
+	if cfg.Auth.InstanceID != "" {
+		return cfg.Auth.InstanceID, nil
+	}
+	// 3. Register via local deterministic registrar.
+	return ensureInstance(ctx, cfg, &localRegistrar{})
+}
+
+// agentVersion is the build-time version string embedded by the linker.
+// Default "dev" is used when no -ldflags version is supplied.
+var agentVersion = "dev"
+
+// ─── RefreshCredential ────────────────────────────────────────────────────────
+
+// RefreshCredential rotates the agent credential by calling the XDR
+// credential-refresh endpoint and atomically replacing the stored credential
+// via the secrets store.
+//
+// It is a reachable runtime entry point. Automatic refresh-before-expiry
+// scheduling is deferred to Phase 7 — only the call path is wired here.
+//
+// Returns an error when:
+//   - mode != remote
+//   - cfg.Agent.XDREndpoint is empty
+//   - no persisted Identity exists in the secrets store
+//   - the XDR refresh endpoint returns an error
+func (a *Agent) RefreshCredential(ctx context.Context) error {
+	if a.cfg.Agent.Mode != "remote" {
+		return fmt.Errorf("RefreshCredential: only supported in mode: remote")
+	}
+	if a.cfg.Agent.XDREndpoint == "" {
+		return fmt.Errorf("RefreshCredential: agent.xdr_endpoint is empty")
+	}
+	if a.store == nil {
+		return fmt.Errorf("RefreshCredential: secrets store not initialised (call after start())")
+	}
+
+	id, ok, err := auth.LoadIdentity(a.store)
+	if err != nil {
+		return fmt.Errorf("RefreshCredential: load identity: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("RefreshCredential: no persisted identity found — agent must register first")
+	}
+
+	refresher := auth.NewRemoteCredentialRefresher(a.cfg.Agent.XDREndpoint, nil)
+	newCred, err := refresher.Refresh(ctx, id)
+	if err != nil {
+		return fmt.Errorf("RefreshCredential: refresh failed: %w", err)
+	}
+
+	if err := auth.ReplaceCredential(a.store, newCred); err != nil {
+		return fmt.Errorf("RefreshCredential: persist new credential: %w", err)
+	}
+	a.cfg.Auth.Credential = newCred
 	return nil
 }
 

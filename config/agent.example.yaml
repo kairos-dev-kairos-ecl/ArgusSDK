@@ -19,6 +19,13 @@ agent:
   # remote → TLS 1.3 mandatory, full three-part auth (group_id + instance_id + credential)
   mode: "remote"
 
+  # xdr_endpoint is the XDR base URL used for instance registration and credential
+  # refresh (e.g. "https://xdr.company.com:8080"). Required in mode: remote.
+  # This is the registration/refresh endpoint — it is DISTINCT from the per-output
+  # signal submission endpoint configured under outputs[].endpoint.
+  # Override via env var: ARGUS_SDK_AGENT_XDR_ENDPOINT=https://xdr.company.com:8080
+  xdr_endpoint: "https://xdr.company.com:8080"
+
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
