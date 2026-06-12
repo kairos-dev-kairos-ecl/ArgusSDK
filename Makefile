@@ -1,7 +1,7 @@
 # Argus SDK — Makefile
 # See .planning/WORKSTREAMS.md G5 for the full target list.
 
-.PHONY: proto build build-all test test-int lint docker install
+.PHONY: proto build build-all test test-int test-llm lint docker install
 
 # proto: regenerate Go gRPC stubs from proto/sdk/v1/ingest.proto
 #
@@ -32,6 +32,11 @@ test:
 # test-int: run integration tests (requires Docker)
 test-int:
 	go test ./... -tags=integration
+
+# test-llm: run local LLM signal tests (requires a local Ollama or vLLM server)
+# Skips cleanly when no backend is reachable. See test/llmsignal/README.md.
+test-llm:
+	go test -tags=llmlocal ./test/llmsignal/... -v
 
 # lint: run golangci-lint
 lint:
