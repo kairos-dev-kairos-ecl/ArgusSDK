@@ -414,11 +414,12 @@ func decodeAddr(addr [maxAddrBytes]byte, af uint16) string {
 	}
 }
 
-// ntohs converts a big-endian uint16 (network byte order from the kernel)
-// to host byte order.
+// ntohs converts a uint16 from network byte order (big-endian, as carried in the
+// kernel connect_event) to host byte order. The event struct is decoded with
+// binary.NativeEndian, so on a little-endian host the network-order DPort lands
+// byte-swapped and must be swapped back here.
 func ntohs(v uint16) uint16 {
-	b := [2]byte{byte(v >> 8), byte(v)}
-	return binary.BigEndian.Uint16(b[:])
+	return v<<8 | v>>8
 }
 
 // boundedCString converts a null-terminated byte slice to a string, bounded to

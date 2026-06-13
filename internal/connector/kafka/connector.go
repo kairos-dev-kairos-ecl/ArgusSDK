@@ -124,13 +124,18 @@ func (c *Connector) Connect(_ context.Context) error {
 
 	// Map RequiredAcks integer to franz-go Acks type.
 	// cfg.RequiredAcks is guaranteed non-nil after New() (nil defaults to *1).
+	//
+	// franz-go enables idempotent producing by default, which the broker only
+	// permits with acks=all. For weaker durability (leader/none) we must disable
+	// idempotent writes explicitly, otherwise kgo.NewClient fails with
+	// "idempotency requires acks=all".
 	switch *c.cfg.RequiredAcks {
 	case -1:
 		opts = append(opts, kgo.RequiredAcks(kgo.AllISRAcks()))
 	case 0:
-		opts = append(opts, kgo.RequiredAcks(kgo.NoAck()))
+		opts = append(opts, kgo.RequiredAcks(kgo.NoAck()), kgo.DisableIdempotentWrite())
 	default: // 1 and anything else → leader ack
-		opts = append(opts, kgo.RequiredAcks(kgo.LeaderAck()))
+		opts = append(opts, kgo.RequiredAcks(kgo.LeaderAck()), kgo.DisableIdempotentWrite())
 	}
 
 	// TLS — built exclusively via connector.NewTLSConfig to guarantee TLS 1.3
