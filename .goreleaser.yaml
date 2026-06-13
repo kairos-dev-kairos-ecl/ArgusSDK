@@ -1,0 +1,167 @@
+# GoReleaser configuration for argus-agent.
+# Local dry run:  goreleaser release --snapshot --clean --skip=publish,sign,notarize
+# Validate:       goreleaser check
+#
+# Signing/notarization run only on `goreleaser release` (a tag build in CI) and
+# are gated on the presence of the relevant secrets, so snapshot builds work
+# without certificates. See docs/RELEASING.md for the required secrets.
+version: 2
+
+project_name: argus-agent
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: argus-agent
+    main: ./cmd/argus-agent
+    binary: argus-agent
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    ids:
+      - argus-agent
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+      - config/agent.example.yaml
+      - packaging/systemd/argus-agent.service
+      - packaging/launchd/org.kairos-foundation.argus-agent.plist
+      - packaging/macos/install.sh
+      - packaging/macos/uninstall.sh
+
+# Native Linux packages: install the binary, the systemd unit, and a default
+# config, and create the service user via the maintainer scripts.
+nfpms:
+  - id: linux-packages
+    package_name: argus-agent
+    ids:
+      - argus-agent
+    vendor: Kairos Foundation
+    homepage: https://kairos-foundation.org
+    maintainer: Kairos Foundation <security@kairos-foundation.org>
+    description: |
+      Argus SDK Agent — collects LLM and Shadow-AI signals and forwards them to
+      ArgusXDR or external SIEM destinations (OCSF).
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/argus-agent.service
+        dst: /lib/systemd/system/argus-agent.service
+      - src: config/agent.example.yaml
+        dst: /etc/argus-agent/agent.yaml
+        type: config|noreplace
+      - dst: /var/lib/argus-agent
+        type: dir
+        file_info:
+          mode: 0750
+    scripts:
+      preinstall: packaging/nfpm/preinstall.sh
+      postinstall: packaging/nfpm/postinstall.sh
+      preremove: packaging/nfpm/preremove.sh
+
+dockers:
+  - image_templates:
+      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent:{{ .Version }}"
+      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent:latest"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=VERSION={{ .Version }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+# Sign the checksums file with GPG (gated on a key being present in CI).
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+    if: '{{ isEnvSet "GPG_FINGERPRINT" }}'
+
+# Authenticode-sign the Windows binary before it is archived (gated on cert).
+binary_signs:
+  - id: windows-authenticode
+    ids:
+      - argus-agent
+    cmd: osslsigncode
+    args:
+      - "sign"
+      - "-pkcs12"
+      - "{{ .Env.WINDOWS_CERT_FILE }}"
+      - "-pass"
+      - "{{ .Env.WINDOWS_CERT_PASSWORD }}"
+      - "-n"
+      - "Argus SDK Agent"
+      - "-i"
+      - "https://kairos-foundation.org"
+      - "-t"
+      - "http://timestamp.digicert.com"
+      - "-in"
+      - "${artifact}"
+      - "-out"
+      - "${artifact}.signed"
+    if: '{{ and (eq .Os "windows") (isEnvSet "WINDOWS_CERT_FILE") }}'
+
+# Sign + notarize the macOS binaries (gated on Apple credentials).
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - argus-agent
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+
+release:
+  github:
+    owner: kairos-dev-kairos-ecl
+    name: ArgusSDK
+  draft: true
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

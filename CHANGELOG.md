@@ -51,9 +51,23 @@ and forwarding agent for LLM applications and enterprise endpoints.
   Prometheus-format `/metrics` (dispatcher counters).
 - Bounded SIGHUP hot-reload: re-applies the EUC watch list and log level without
   a restart. Transport, auth, and output topology require a restart by design.
-- Distroless static container image and a reference Kubernetes manifest.
 - Single canonical sample configuration (`config/agent.example.yaml`), validated
   by a drift-guard test so documented keys cannot diverge from the code.
+- `argus-agent --version` reports the build version.
+
+**Packaging & distribution**
+- Native installable service for every platform:
+  - **Linux** — `.deb`/`.rpm` packages that install a systemd unit, a default
+    config, and a dedicated unprivileged `argus-agent` service user.
+  - **Windows** — runs under the Service Control Manager; `argus-agent service
+    install|uninstall|start|stop` subcommands manage it.
+  - **macOS** — launchd plist with `install.sh`/`uninstall.sh` helpers.
+- Distroless static container image (`ghcr.io/kairos-dev-kairos-ecl/argus-agent`)
+  and a reference Kubernetes manifest.
+- Automated releases via GoReleaser: cross-platform binaries, packages, archives,
+  container image, and a signed `checksums.txt`, published on tag. Authenticode
+  (Windows) and Developer ID + notarization (macOS) activate when signing
+  secrets are configured. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Security
 - TLS 1.3 enforced for remote mode (no downgrade path exposed).

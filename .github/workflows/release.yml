@@ -1,0 +1,74 @@
+name: release
+
+# Tag a release to build and publish all artifacts:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Produces (via GoReleaser): cross-platform binaries, .deb/.rpm packages,
+# archives (with systemd unit / launchd plist / install scripts), a multi-arch
+# container image on GHCR, and a signed checksums file. Signing and notarization
+# activate automatically when the corresponding secrets are configured.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create GitHub Releases
+  packages: write # push the container image to GHCR
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets are surfaced as env so per-step `if:` guards can detect them and
+      # GoReleaser's `{{ isEnvSet ... }}` templates can gate signing.
+      GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install signing tools (osslsigncode for Windows Authenticode)
+        run: sudo apt-get update && sudo apt-get install -y osslsigncode
+
+      - name: Import GPG signing key
+        if: ${{ env.GPG_FINGERPRINT != '' }}
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Decode Windows code-signing certificate
+        if: ${{ env.WINDOWS_CERT_BASE64 != '' }}
+        run: |
+          echo "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/windows-cert.p12"
+          echo "WINDOWS_CERT_FILE=$RUNNER_TEMP/windows-cert.p12" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

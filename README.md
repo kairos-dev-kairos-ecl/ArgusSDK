@@ -79,27 +79,77 @@ OS-specific implementations:
 
 ---
 
-## Quick Start
+## Installation
+
+The agent ships as a native, installable service for each platform (like NXLog
+or rsyslog) plus a container image. Download the artifact for your OS from the
+[latest release](https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases),
+then configure `/etc/argus-agent/agent.yaml` before starting.
+
+### Linux (.deb / .rpm)
 
 ```bash
-# Build
-make build
+# Debian/Ubuntu
+sudo dpkg -i argus-agent_<version>_linux_amd64.deb
+# RHEL/Fedora/SUSE
+sudo rpm -i argus-agent-<version>.x86_64.rpm
 
-# Configure
+# The package installs a systemd unit and a default config. Edit it, then:
+sudo nano /etc/argus-agent/agent.yaml
+sudo systemctl enable --now argus-agent
+sudo systemctl status argus-agent          # check it's running
+sudo systemctl reload argus-agent          # apply EUC/log-level changes (SIGHUP)
+```
+
+### Windows (service)
+
+```powershell
+# Extract argus-agent_<version>_windows_amd64.zip, then from that folder:
+.\argus-agent.exe service install --config C:\ProgramData\argus-agent\agent.yaml
+.\argus-agent.exe service start
+# Manage with the same subcommands, or services.msc:
+.\argus-agent.exe service stop
+.\argus-agent.exe service uninstall
+```
+
+The agent runs under the Windows Service Control Manager and starts at boot.
+
+### macOS (launchd)
+
+```bash
+# Extract the darwin archive, then:
+sudo ./packaging/macos/install.sh
+sudo nano /etc/argus-agent/agent.yaml
+sudo launchctl load -w /Library/LaunchDaemons/org.kairos-foundation.argus-agent.plist
+```
+
+### Docker / Kubernetes
+
+```bash
+docker run -v /etc/argus-agent:/etc/argus-agent \
+  ghcr.io/kairos-dev-kairos-ecl/argus-agent:latest
+```
+
+A reference manifest is in [`deploy/kubernetes/deployment.yaml`](deploy/kubernetes/deployment.yaml).
+
+### Build from source
+
+```bash
+make build                 # compile for the current platform
+make install               # install argus-agent to GOPATH/bin
 cp config/agent.example.yaml agent.yaml
-# Edit agent.yaml: set agent.group_id, auth.install_token, and outputs[].endpoint
-
-# Install to GOPATH/bin
-make install
-
-# Run (first run triggers XDR registration)
 argus-agent --config agent.yaml
 ```
 
-Instrument your application:
+> The first run in `mode: remote` triggers XDR registration (Group ID + install
+> token → server-assigned instance ID). See [Deployment](#deployment) below.
+
+## Instrumenting an application
+
+Your LLM app sends signals to the **local agent**, not directly to XDR:
 
 ```python
-# Python (sends signals to local agent, not directly to XDR)
+# Python
 from argus_sdk import ArgusClient
 client = ArgusClient(endpoint="http://127.0.0.1:5002")
 client.emit(layer="L9_API_GATEWAY", category="api.request", severity="INFO")
@@ -173,9 +223,12 @@ argus-sdk/
 │   └── secrets/            # AES-256-GCM encrypted secrets store
 ├── pkg/signal/             # Public signal types (consumed by instrumentation libs)
 ├── proto/                  # Protocol buffer definitions (gen/ is generated output)
+├── packaging/              # systemd unit, launchd plist, nfpm + macOS scripts
 ├── deploy/kubernetes/      # Reference Kubernetes manifest
 ├── test/llmsignal/         # End-to-end integration harness
+├── docs/                   # RELEASING and other operator docs
 ├── config/agent.example.yaml
+├── .goreleaser.yaml        # Release build: binaries, deb/rpm, docker, signing
 ├── Dockerfile              # Distroless/static container image
 ├── Makefile
 ├── go.mod
@@ -214,6 +267,7 @@ Do not import XDR-internal packages from the SDK. The boundary is the proto sche
 | | |
 |---|---|
 | Release notes | [CHANGELOG.md](CHANGELOG.md) |
+| Building & cutting a release | [docs/RELEASING.md](docs/RELEASING.md) |
 | Contributing & local development | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security policy & disclosure | [SECURITY.md](SECURITY.md) |
 | License | [Apache-2.0](LICENSE) |

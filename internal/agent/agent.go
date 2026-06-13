@@ -189,15 +189,38 @@ func (a *Agent) SetReloadSources(configPath string, level zap.AtomicLevel) {
 	a.atomicLevel = level
 }
 
-// Run starts the agent, blocks until a SIGINT/SIGTERM is received, then shuts down.
-// This is the entry point called by cmd/argus-agent/main.go.
-func (a *Agent) Run() error {
-	ctx, cancel := context.WithCancel(context.Background())
+// Start initializes and starts all components, deriving the agent's lifecycle
+// context from ctx. It returns once startup completes (or fails); it does not
+// block. Use Stop to shut down. This is the entry point for the Windows service
+// handler; console/Unix deployments use Run instead.
+func (a *Agent) Start(ctx context.Context) error {
+	cctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
-	defer cancel()
-
-	if err := a.start(ctx); err != nil {
+	if err := a.start(cctx); err != nil {
+		cancel()
 		return fmt.Errorf("agent start: %w", err)
+	}
+	return nil
+}
+
+// Stop gracefully shuts the agent down: drains the buffer, closes collectors and
+// connectors, and cancels the lifecycle context. Safe to call once after Start
+// or Run.
+func (a *Agent) Stop() error {
+	return a.stop()
+}
+
+// ReloadConfig re-applies the bounded set of hot-reloadable settings (EUC watch
+// list + log level). Exposed so platform service handlers can trigger a reload.
+func (a *Agent) ReloadConfig() error {
+	return a.reloadConfig()
+}
+
+// Run starts the agent, blocks until a SIGINT/SIGTERM is received (reloading on
+// SIGHUP), then shuts down. This is the console/Unix entry point.
+func (a *Agent) Run() error {
+	if err := a.Start(context.Background()); err != nil {
+		return err
 	}
 
 	// Block until OS signal
@@ -213,7 +236,7 @@ func (a *Agent) Run() error {
 			}
 		case syscall.SIGINT, syscall.SIGTERM:
 			a.logger.Info("shutdown signal received")
-			return a.stop()
+			return a.Stop()
 		}
 	}
 }

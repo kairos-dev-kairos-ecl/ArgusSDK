@@ -87,7 +87,11 @@ func runAgent(_ *cobra.Command, _ []string) error {
 
 	a.SetReloadSources(cfgFile, atomicLevel)
 
-	return a.Run()
+	// runAgentLifecycle is platform-specific: on Windows it runs under the
+	// Service Control Manager when launched as a service (and falls back to
+	// console mode otherwise); elsewhere it runs in the foreground under
+	// systemd/launchd supervision.
+	return runAgentLifecycle(a)
 }
 
 func buildLogger() (*zap.Logger, zap.AtomicLevel, error) {

@@ -1,7 +1,7 @@
 # Argus SDK — Makefile
 # Run `make help` for a description of each target.
 
-.PHONY: help proto build build-all test test-int test-llm lint docker install
+.PHONY: help proto build build-all test test-int test-llm lint docker install snapshot
 
 # help: print available targets
 help:
@@ -15,6 +15,7 @@ help:
 	@echo "  lint       run golangci-lint"
 	@echo "  docker     build the distroless container image"
 	@echo "  install    install argus-agent to GOPATH/bin"
+	@echo "  snapshot   build all release artifacts locally (goreleaser)"
 
 # proto: regenerate Go gRPC stubs from proto/sdk/v1/ingest.proto
 #
@@ -62,3 +63,8 @@ docker:
 # install: install argus-agent binary to GOPATH/bin
 install:
 	go install ./cmd/argus-agent
+
+# snapshot: build all release artifacts locally (binaries, deb/rpm, archives)
+# without signing or publishing. Requires goreleaser (https://goreleaser.com).
+snapshot:
+	goreleaser release --snapshot --clean --skip=publish,sign,notarize

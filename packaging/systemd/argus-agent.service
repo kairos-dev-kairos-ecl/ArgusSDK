@@ -1,0 +1,37 @@
+[Unit]
+Description=Argus SDK Agent
+Documentation=https://github.com/kairos-dev-kairos-ecl/ArgusSDK
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/argus-agent --config /etc/argus-agent/agent.yaml
+# Reload the bounded hot-reloadable settings (EUC watch list + log level).
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Run as a dedicated unprivileged user created by the package postinstall.
+User=argus-agent
+Group=argus-agent
+
+# Persistent state (WAL buffer + encrypted agent-state.json) lives here.
+# systemd creates /var/lib/argus-agent with the correct ownership.
+StateDirectory=argus-agent
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/argus-agent
+
+# The Linux EUC eBPF observer needs CAP_BPF + CAP_PERFMON. It degrades
+# gracefully if these are withheld, so you may remove them to run fully
+# unprivileged (local-inference port sampling still works).
+AmbientCapabilities=CAP_BPF CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.kairos-foundation.argus-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/argus-agent</string>
+        <string>--config</string>
+        <string>/etc/argus-agent/agent.yaml</string>
+    </array>
+
+    <!-- Start at boot and keep the agent running. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/argus-agent/agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/argus-agent/agent.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/var/lib/argus-agent</string>
+</dict>
+</plist>
