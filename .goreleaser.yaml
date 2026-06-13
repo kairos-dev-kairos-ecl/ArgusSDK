@@ -96,59 +96,58 @@ dockers:
 checksum:
   name_template: "checksums.txt"
 
-# Sign the checksums file with GPG (gated on a key being present in CI).
+# Keyless signing of the checksums file with Sigstore cosign. This is FREE and
+# uses the workflow's GitHub OIDC identity — no secrets, no key to manage. It
+# emits checksums.txt.sig + checksums.txt.pem, verifiable with:
+#   cosign verify-blob --certificate checksums.txt.pem \
+#     --signature checksums.txt.sig \
+#     --certificate-identity-regexp 'https://github.com/kairos-dev-kairos-ecl/ArgusSDK/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 signs:
-  - id: checksums
-    artifacts: checksum
-    cmd: gpg
+  - id: cosign-checksum
+    cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
     args:
-      - "--batch"
-      - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - "--output"
-      - "${signature}"
-      - "--detach-sign"
+      - "sign-blob"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
       - "${artifact}"
-    if: '{{ isEnvSet "GPG_FINGERPRINT" }}'
+      - "--yes"
+    artifacts: checksum
+    output: true
 
-# Authenticode-sign the Windows binary before it is archived (gated on cert).
-binary_signs:
-  - id: windows-authenticode
-    ids:
-      - argus-agent
-    cmd: osslsigncode
+# Keyless signing of the container image (cosign + OIDC, also free).
+docker_signs:
+  - id: cosign-image
+    cmd: cosign
     args:
       - "sign"
-      - "-pkcs12"
-      - "{{ .Env.WINDOWS_CERT_FILE }}"
-      - "-pass"
-      - "{{ .Env.WINDOWS_CERT_PASSWORD }}"
-      - "-n"
-      - "Argus SDK Agent"
-      - "-i"
-      - "https://kairos-foundation.org"
-      - "-t"
-      - "http://timestamp.digicert.com"
-      - "-in"
+      - "--yes"
       - "${artifact}"
-      - "-out"
-      - "${artifact}.signed"
-    if: '{{ and (eq .Os "windows") (isEnvSet "WINDOWS_CERT_FILE") }}'
+    artifacts: all
+    output: true
 
-# Sign + notarize the macOS binaries (gated on Apple credentials).
-notarize:
-  macos:
-    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
-      ids:
-        - argus-agent
-      sign:
-        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
-        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
-      notarize:
-        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
-        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
-        key: "{{ .Env.MACOS_NOTARY_KEY }}"
-        wait: true
+# Homebrew tap formula — free macOS/Linux CLI install with no Gatekeeper
+# friction (brew-installed binaries are not quarantined). The formula is
+# generated on every release; pushing to the tap stays OFF until you:
+#   1. create the repo  kairos-dev-kairos-ecl/homebrew-tap
+#   2. add a PAT secret HOMEBREW_TAP_GITHUB_TOKEN with repo scope
+#   3. set skip_upload to "false" and add the repository.token field below
+# Until then the formula is built into dist/ for inspection only.
+brews:
+  - name: argus-agent
+    repository:
+      owner: kairos-dev-kairos-ecl
+      name: homebrew-tap
+    skip_upload: "true"
+    homepage: "https://kairos-foundation.org"
+    description: "Argus SDK Agent — LLM and Shadow-AI signal collection and forwarding"
+    license: "Apache-2.0"
+    install: |
+      bin.install "argus-agent"
+    test: |
+      system "#{bin}/argus-agent", "--version"
 
 release:
   github:

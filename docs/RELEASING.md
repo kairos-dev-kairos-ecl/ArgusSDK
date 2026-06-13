@@ -17,33 +17,67 @@ git push origin v1.0.0
 | `.deb` / `.rpm` packages (systemd unit + default config + service user) | linux |
 | Archives (`.tar.gz` / `.zip`) incl. service units and install scripts | all |
 | Multi-arch container image | `ghcr.io/kairos-dev-kairos-ecl/argus-agent` |
-| `checksums.txt` (+ GPG signature) | — |
+| `checksums.txt` (+ cosign `.sig`/`.pem`) | — |
 
 The GitHub Release is created as a **draft** so you can review artifacts before
 publishing.
 
-## Signing & notarization
+## Trust stack (free — no certificates, no secrets)
 
-Signing activates automatically when the matching secrets are present; without
-them the release still builds, just unsigned. Configure these as repository
-**Actions secrets**:
+The release is verifiable out of the box using Sigstore and GitHub OIDC. There
+is **nothing to configure** — these run on the workflow's own identity.
 
-| Secret | Purpose |
-|---|---|
-| `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, `GPG_FINGERPRINT` | Detached GPG signature over `checksums.txt` |
-| `WINDOWS_CERT_BASE64`, `WINDOWS_CERT_PASSWORD` | Authenticode signing of the Windows `.exe` (base64-encoded PKCS#12) |
-| `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD` | Apple Developer ID certificate (base64-encoded PKCS#12) |
-| `MACOS_NOTARY_ISSUER_ID`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_KEY` | App Store Connect API key for notarization |
-
-Notes:
-- Windows Authenticode uses `osslsigncode` and macOS notarization uses the
-  GoReleaser built-in notary (both run on the Linux runner — no macOS runner
-  required).
-- To preview a build locally without any secrets:
+- **cosign keyless signatures** over `checksums.txt` and the container image.
+  Verify a download:
   ```bash
-  goreleaser release --snapshot --clean --skip=publish,sign,notarize
-  goreleaser check     # validate the configuration
+  cosign verify-blob \
+    --certificate checksums.txt.pem \
+    --signature checksums.txt.sig \
+    --certificate-identity-regexp 'https://github.com/kairos-dev-kairos-ecl/ArgusSDK/.*' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    checksums.txt
   ```
+- **SLSA build provenance** for every artifact:
+  ```bash
+  gh attestation verify argus-agent_1.0.0_linux_amd64.tar.gz \
+    --repo kairos-dev-kairos-ecl/ArgusSDK
+  ```
+
+Provenance cryptographically ties each binary to this exact source commit and
+build workflow — stronger integrity assurance than a paid code-signing cert,
+which only suppresses OS GUI warnings and says nothing about the contents.
+
+Local validation without any of this:
+```bash
+goreleaser check                                              # validate config
+goreleaser release --snapshot --clean --skip=publish,sign,docker
+```
+
+## Homebrew tap (free, optional)
+
+`brew`-installed CLI binaries are not Gatekeeper-quarantined, so a tap is the
+zero-cost way to ship to macOS without notarization. The formula is generated
+on every release but not pushed until you enable it:
+
+1. Create the repo `kairos-dev-kairos-ecl/homebrew-tap`.
+2. Add a PAT secret `HOMEBREW_TAP_GITHUB_TOKEN` (repo scope).
+3. In `.goreleaser.yaml`, set the `brews` block's `skip_upload` to `"false"` and
+   add `token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"` under `repository`.
+
+Then `brew install kairos-dev-kairos-ecl/tap/argus-agent` works.
+
+## Optional: paid OS code signing (later)
+
+Only needed to remove SmartScreen/Gatekeeper warnings for double-click
+installs — not required for a functional, verifiable release.
+
+- **Windows Authenticode** — apply to the [SignPath Foundation](https://signpath.org)
+  free OSS program, or use a cloud HSM (Azure Trusted Signing, DigiCert
+  KeyLocker, SSL.com eSigner). Add a signing step to the release workflow per the
+  provider's action/CLI.
+- **macOS Developer ID + notarization** — requires an Apple Developer membership
+  ($99/yr); re-add a GoReleaser `notarize.macos` block fed by an exported `.p12`
+  and an App Store Connect API key.
 
 ## Versioning
 

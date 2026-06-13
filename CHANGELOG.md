@@ -65,9 +65,11 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Distroless static container image (`ghcr.io/kairos-dev-kairos-ecl/argus-agent`)
   and a reference Kubernetes manifest.
 - Automated releases via GoReleaser: cross-platform binaries, packages, archives,
-  container image, and a signed `checksums.txt`, published on tag. Authenticode
-  (Windows) and Developer ID + notarization (macOS) activate when signing
-  secrets are configured. See [docs/RELEASING.md](docs/RELEASING.md).
+  and a multi-arch container image, published on tag.
+- Supply-chain trust with zero cost or secrets: Sigstore **cosign keyless**
+  signatures over the checksums and container image, plus **SLSA build-provenance
+  attestations** for every artifact (verifiable with `cosign verify-blob` and
+  `gh attestation verify`). See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Security
 - TLS 1.3 enforced for remote mode (no downgrade path exposed).
