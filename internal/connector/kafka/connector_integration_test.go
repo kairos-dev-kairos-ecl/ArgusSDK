@@ -15,16 +15,43 @@ package kafka_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
+	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector/kafka"
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/pkg/signal"
 	tc "github.com/testcontainers/testcontainers-go"
 )
+
+// createTopic pre-provisions a topic on the test broker. The connector does not
+// auto-create topics (production topics are provisioned by operators), so the
+// integration test must create the topic it produces to.
+func createTopic(ctx context.Context, t *testing.T, brokers []string, topic string) {
+	t.Helper()
+	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	if err != nil {
+		t.Fatalf("admin client: %v", err)
+	}
+	defer cl.Close()
+
+	adm := kadm.NewClient(cl)
+	resp, err := adm.CreateTopics(ctx, 1, 1, nil, topic)
+	if err != nil {
+		t.Fatalf("create topic request: %v", err)
+	}
+	for _, r := range resp {
+		if r.Err != nil && !errors.Is(r.Err, kerr.TopicAlreadyExists) {
+			t.Fatalf("create topic %q: %v", r.Topic, r.Err)
+		}
+	}
+}
 
 // TestKafkaConnector_DeliverMultiSignalBatch starts a Kafka container, connects a
 // kafka.Connector, and sends a multi-signal SignalBatch with UseOCSF=true.
@@ -54,6 +81,9 @@ func TestKafkaConnector_DeliverMultiSignalBatch(t *testing.T) {
 	t.Logf("kafka brokers: %v", brokers)
 
 	const topic = "argus-integration-test"
+
+	// Provision the topic before producing (the connector never auto-creates).
+	createTopic(ctx, t, brokers, topic)
 
 	cfg := kafka.Config{
 		Brokers: brokers,

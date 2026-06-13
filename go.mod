@@ -14,6 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/elasticsearch v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.42.0
 	github.com/twmb/franz-go v1.21.2
+	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/sys v0.44.0
 	google.golang.org/grpc v1.67.0
