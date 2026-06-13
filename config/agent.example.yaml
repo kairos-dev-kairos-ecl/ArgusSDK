@@ -58,8 +58,25 @@ ingest:
 
     # unix is the path to an optional Unix domain socket.
     # Lower overhead than loopback TCP for co-located applications.
-    # Leave empty to disable.
+    # Leave empty to disable. Ignored on Windows.
     unix: "/var/run/argus-agent.sock"
+
+  # euc is the Shadow AI watch list for the OS-level collector.
+  # Both lists are hot-reloadable: send SIGHUP after editing to apply without
+  # a restart (no other settings are reloaded).
+  euc:
+    # ai_endpoints — outbound hostnames to flag as AI-service access.
+    ai_endpoints:
+      - "api.openai.com"
+      - "api.anthropic.com"
+      - "generativelanguage.googleapis.com"
+
+    # local_inference_ports — local runtime ports to flag as local inference.
+    # Ollama 11434, LM Studio 1234, vLLM 8000.
+    local_inference_ports:
+      - 11434
+      - 1234
+      - 8000
 
 # ---------------------------------------------------------------------------
 # Local signal buffer (used when output connectors are unreachable)
@@ -145,13 +162,17 @@ logging:
 
 # ---------------------------------------------------------------------------
 # Observability (liveness/readiness/metrics)
+# A single HTTP server exposes all three endpoints:
+#   GET /healthz  → liveness  (200 once the process is serving)
+#   GET /readyz   → readiness (200 once all connectors are healthy, else 503)
+#   GET /metrics  → Prometheus text-format dispatcher counters
 # ---------------------------------------------------------------------------
 observability:
-  # health_check_port is the HTTP port for /_health (liveness) and /_ready
-  # (readiness) probes. Commonly used by Kubernetes and container orchestrators.
-  # Leave empty to disable the health check server.
-  health_check_port: 9090
+  # disabled turns the observability server off entirely. The server is ON by
+  # default (omit this block or set false to keep it enabled).
+  disabled: false
 
-  # metrics_port is the HTTP port for /metrics (Prometheus format).
-  # Leave empty to disable metrics collection.
-  metrics_port: 9091
+  # addr is the bind address (host:port) for the observability server.
+  # Defaults to 127.0.0.1:9090 (loopback only). In containers/Kubernetes,
+  # bind 0.0.0.0 so the kubelet can reach the probes at the pod IP.
+  addr: "127.0.0.1:9090"

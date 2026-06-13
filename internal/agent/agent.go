@@ -58,15 +58,30 @@ type AuthConfig struct {
 	Credential   string `mapstructure:"credential"`    // rotating signal-submission credential
 }
 
-// IngestConfig configures the local listener for instrumentation libraries.
+// IngestConfig configures the local listener for instrumentation libraries
+// and the EUC (Shadow AI) watch list.
 type IngestConfig struct {
 	Listen ListenConfig `mapstructure:"listen"`
+	EUC    EUCConfig    `mapstructure:"euc"`
 }
 
 // ListenConfig specifies the addresses the agent binds for inbound signals.
 type ListenConfig struct {
 	GRPC string `mapstructure:"grpc"`
 	Unix string `mapstructure:"unix"`
+}
+
+// EUCConfig drives the Shadow AI watch list. Both fields are hot-reloadable via
+// SIGHUP (see internal/agent/reload.go); the same keys are read at startup and
+// on reload so the two paths never diverge.
+type EUCConfig struct {
+	// AIEndpoints is the list of hostnames to watch for outbound AI-service access
+	// (e.g. "api.openai.com", "api.anthropic.com").
+	AIEndpoints []string `mapstructure:"ai_endpoints"`
+
+	// LocalInferencePorts lists local inference runtime ports to detect
+	// (Ollama 11434, LM Studio 1234, vLLM 8000, etc.).
+	LocalInferencePorts []int `mapstructure:"local_inference_ports"`
 }
 
 // OutputConfig configures a single output connector.
@@ -316,8 +331,10 @@ func (a *Agent) start(ctx context.Context) error {
 	// sampler/darwin) with the noop as the universal fallback for unprivileged
 	// environments and unsupported targets.
 	eucCfg := euc.Config{
-		AppID: a.cfg.Agent.GroupID,
-		Env:   a.cfg.Agent.Mode,
+		AppID:               a.cfg.Agent.GroupID,
+		Env:                 a.cfg.Agent.Mode,
+		AIEndpoints:         a.cfg.Ingest.EUC.AIEndpoints,
+		LocalInferencePorts: a.cfg.Ingest.EUC.LocalInferencePorts,
 	}
 	a.eucCollector = euc.New(eucCfg, euc.NewOSCollector(eucCfg))
 	a.collectors = append(a.collectors, a.eucCollector)

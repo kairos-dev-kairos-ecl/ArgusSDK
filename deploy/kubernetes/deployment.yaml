@@ -26,8 +26,7 @@ data:
         grpc: "0.0.0.0:5002"
     buffer:
       dir: "/var/lib/argus-agent/buffer"
-      max_segment_bytes: 67108864
-      max_total_bytes: 1073741824
+      max_size_mb: 1024
     tls:
       enabled: true
       min_version: "1.3"

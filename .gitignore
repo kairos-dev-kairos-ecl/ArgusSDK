@@ -1,3 +1,7 @@
+# Internal development workflow artifacts (not part of the published project)
+/.planning/
+/.claude/
+
 # Binaries (root-anchored to avoid matching cmd/argus-agent/ directory)
 /argus-agent
 /argus-agent.exe

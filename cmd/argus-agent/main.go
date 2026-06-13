@@ -16,6 +16,10 @@ import (
 
 var cfgFile string
 
+// version is the agent version. It is overridden at build time via
+// -ldflags "-X main.version=<tag>" (see Dockerfile). Defaults to "dev".
+var version = "dev"
+
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -28,7 +32,8 @@ var rootCmd = &cobra.Command{
 	Short: "Argus SDK signal collection and forwarding agent",
 	Long: `argus-agent collects signals from LLM instrumentation libraries and
 routes them to configured output destinations (ArgusXDR, Kafka, Splunk, etc.).`,
-	RunE: runAgent,
+	Version: version,
+	RunE:    runAgent,
 }
 
 func init() {

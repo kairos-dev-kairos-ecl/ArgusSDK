@@ -195,7 +195,8 @@ type DispatchJob struct {
 }
 
 // Dispatcher fans batches out to the target Connectors via a fixed worker pool.
-// Each Connector gets its own circuit breaker (managed externally via resilience.CircuitBreaker).
+// Delivery failures are surfaced to the caller (and counted in dispatcher stats);
+// retry/backoff is handled by the WAL buffer's drain loop, not here.
 type Dispatcher struct {
 	config   *DispatchConfig
 	registry *ConnectorRegistry

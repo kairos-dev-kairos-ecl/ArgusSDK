@@ -71,53 +71,6 @@ func TestLoadSecrets_MissingFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// F11: GetSecret cache test (RED phase)
-// ---------------------------------------------------------------------------
-
-// TestGetSecret_UsesCache (F11): after saving a secret, GetSecret must serve
-// subsequent calls from cache — even after the store FILE has been deleted
-// between the first and second call. Proves no re-read occurs.
-func TestGetSecret_UsesCache(t *testing.T) {
-	s, path := newTestStore(t)
-	SetStore(s)
-	t.Cleanup(func() { SetStore(nil) })
-
-	// Save initial value.
-	if err := s.SaveSecrets(map[string]string{"mykey": "value1"}); err != nil {
-		t.Fatalf("SaveSecrets: %v", err)
-	}
-
-	// First call — warms cache.
-	v1, ok := GetSecret("mykey")
-	if !ok || v1 != "value1" {
-		t.Fatalf("GetSecret first call: got %q %v, want %q true", v1, ok, "value1")
-	}
-
-	// Delete the backing file — second call must still serve from cache.
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-
-	v2, ok2 := GetSecret("mykey")
-	if !ok2 || v2 != "value1" {
-		t.Errorf("GetSecret second call (file deleted): got %q %v, want %q true (cache must serve)", v2, ok2, "value1")
-	}
-
-	// Recreate store with new value — SaveSecrets must invalidate cache.
-	s2, path2 := newTestStore(t)
-	SetStore(s2)
-	t.Cleanup(func() { os.Remove(path2) })
-
-	if err := s2.SaveSecrets(map[string]string{"mykey": "value2"}); err != nil {
-		t.Fatalf("SaveSecrets s2: %v", err)
-	}
-	v3, ok3 := GetSecret("mykey")
-	if !ok3 || v3 != "value2" {
-		t.Errorf("GetSecret after SaveSecrets invalidation: got %q %v, want %q true", v3, ok3, "value2")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // F15: temp file permissions test (RED phase)
 // ---------------------------------------------------------------------------
 

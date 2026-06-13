@@ -1,7 +1,20 @@
 # Argus SDK — Makefile
-# See .planning/WORKSTREAMS.md G5 for the full target list.
+# Run `make help` for a description of each target.
 
-.PHONY: proto build build-all test test-int test-llm lint docker install
+.PHONY: help proto build build-all test test-int test-llm lint docker install
+
+# help: print available targets
+help:
+	@echo "argus-sdk make targets:"
+	@echo "  build      compile for the current platform"
+	@echo "  build-all  cross-compile for linux/windows/darwin"
+	@echo "  test       run unit tests"
+	@echo "  test-int   run integration tests (requires Docker)"
+	@echo "  test-llm   run local LLM signal tests (requires Ollama/vLLM)"
+	@echo "  proto      regenerate gRPC stubs (requires buf)"
+	@echo "  lint       run golangci-lint"
+	@echo "  docker     build the distroless container image"
+	@echo "  install    install argus-agent to GOPATH/bin"
 
 # proto: regenerate Go gRPC stubs from proto/sdk/v1/ingest.proto
 #

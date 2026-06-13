@@ -72,7 +72,10 @@ On enterprise endpoints, the agent's **sole purpose** is detecting which AI serv
 - Full network flow capture
 - Content inspection of AI API payloads
 
-OS-specific implementations: `internal/collector/euc/linux.go` (eBPF), `windows.go` (WFP/ETW), `darwin.go` (Network Extension).
+OS-specific implementations:
+- `linux.go` — eBPF kprobe observer on `tcp_v4/v6_connect` + gopsutil local-port sampler (degrades gracefully without `CAP_BPF`)
+- `windows.go` — ETW Kernel-Network provider
+- `darwin.go` — no-root established-connection sampler via gopsutil (a full `NEDNSProxyProvider` Network Extension is deferred; it requires a signed, notarized `.app` with a managed entitlement, which is not distributable as a `go install` CLI)
 
 ---
 
@@ -106,13 +109,13 @@ client.emit(layer="L9_API_GATEWAY", category="api.request", severity="INFO")
 
 ## Observability
 
-The agent exposes health and metrics endpoints for monitoring:
+A single HTTP server (bind address `observability.addr`, default `127.0.0.1:9090`) exposes:
 
-- **Liveness probe** (`GET /_health`) — returns 200 OK if the agent process is alive (configured at `observability.health_check_port`, default :9090)
-- **Readiness probe** (`GET /_ready`) — returns 200 OK if all ingest listeners and output connectors are healthy (same port)
-- **Metrics endpoint** (`GET /metrics`) — Prometheus-format metrics at `observability.metrics_port` (default :9091)
+- **Liveness probe** (`GET /healthz`) — returns `200 OK` once the process is serving.
+- **Readiness probe** (`GET /readyz`) — returns `200 OK` once startup completes and connectors are wired; `503` otherwise so orchestrators hold traffic until the agent is ready.
+- **Metrics endpoint** (`GET /metrics`) — Prometheus text-format dispatcher counters (`argus_dispatch_accepted_total`, `_delivered_total`, `_failed_total`, `_dropped_total`). No client library; the format is hand-rolled to avoid a dependency.
 
-These are commonly used by Kubernetes liveness/readiness probes and fleet monitoring systems. Disable either by leaving the port empty in the config.
+The server is on by default. Bind `0.0.0.0` in containers so the kubelet can reach the probes at the pod IP, or set `observability.disabled: true` to turn it off entirely.
 
 ---
 
@@ -138,7 +141,7 @@ Send SIGHUP to the agent process to trigger config reload without restarting:
 kill -HUP $(pidof argus-agent)
 ```
 
-The agent re-reads `config/agent.yaml` and re-binds listeners. Existing connections may experience brief interruption; the buffer preserves in-flight signals.
+Hot-reload is intentionally **bounded**: SIGHUP re-applies only the EUC watch list (`AIEndpoints` + `LocalInferencePorts`) and the log level. Transport, auth, and output topology are not reloaded — those require a restart by design, so a bad edit can never silently re-wire delivery. In-flight signals are preserved in the WAL buffer throughout.
 
 ---
 
@@ -148,26 +151,30 @@ The agent re-reads `config/agent.yaml` and re-binds listeners. Existing connecti
 argus-sdk/
 ├── cmd/argus-agent/        # Binary entry point (cobra CLI)
 ├── internal/
-│   ├── agent/              # Core lifecycle: start, stop, config wiring
-│   ├── auth/               # Registration, credential refresh
+│   ├── agent/              # Core lifecycle: start/stop, config wiring,
+│   │                       #   observability server, SIGHUP reload
+│   ├── auth/               # Registration, credential refresh, encrypted state
 │   ├── buffer/             # WAL-backed local signal buffer
 │   ├── collector/
 │   │   ├── collector.go    # Collector interface
-│   │   ├── llm/            # gRPC listener for Python/TS libs
+│   │   ├── llm/            # gRPC listener for Python/TS instrumentation libs
 │   │   └── euc/            # Shadow AI OS-level collector (Linux/Windows/macOS)
 │   ├── connector/
 │   │   ├── connector.go    # Connector interface + registry + dispatcher
+│   │   ├── factory/        # Connector factory (instantiation by type)
 │   │   ├── argusxdr/       # Mode 1: ArgusSignal proto → XDR
 │   │   ├── kafka/          # Mode 2: OCSF → Kafka
 │   │   ├── splunk/         # Mode 2: OCSF → Splunk HEC
-│   │   ├── syslog/         # CEF/ArcSight → syslog server
-│   │   └── factory/        # Connector factory (instantiation & registry)
+│   │   ├── elastic/        # Mode 2: OCSF → Elasticsearch
+│   │   └── syslog/         # CEF/ArcSight → syslog server
 │   ├── ocsf/               # ArgusSignal → OCSF v1.3 mapper
+│   ├── dryrun/             # Offline OCSF validation + signal recorder/loader
 │   ├── resilience/         # Circuit breaker, token-bucket rate limiter
-│   ├── secrets/            # AES-256-GCM encrypted secrets store
-│   └── observability/      # Health checks, metrics, tracing (WS-C v1.0)
+│   └── secrets/            # AES-256-GCM encrypted secrets store
 ├── pkg/signal/             # Public signal types (consumed by instrumentation libs)
 ├── proto/                  # Protocol buffer definitions (gen/ is generated output)
+├── deploy/kubernetes/      # Reference Kubernetes manifest
+├── test/llmsignal/         # End-to-end integration harness
 ├── config/agent.example.yaml
 ├── Dockerfile              # Distroless/static container image
 ├── Makefile
@@ -199,3 +206,19 @@ argus-sdk/
 ArgusSDK is a **sibling project**, not a fork or internal component of ArgusXDR. The only shared artifact is the `ArgusSignal` protobuf schema — the SDK uses it for Mode 1 output; XDR uses it internally throughout its pipeline.
 
 Do not import XDR-internal packages from the SDK. The boundary is the proto schema and the public gRPC ingest API.
+
+---
+
+## Documentation & Project
+
+| | |
+|---|---|
+| Release notes | [CHANGELOG.md](CHANGELOG.md) |
+| Contributing & local development | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security policy & disclosure | [SECURITY.md](SECURITY.md) |
+| License | [Apache-2.0](LICENSE) |
+
+## License
+
+ArgusSDK is licensed under the [Apache License 2.0](LICENSE). Contributions are
+accepted under the same license; see [CONTRIBUTING.md](CONTRIBUTING.md).

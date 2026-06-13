@@ -1,0 +1,10 @@
+# Normalize line endings to LF in the repository for all text files.
+# Prevents CRLF churn between Windows and Linux/macOS contributors.
+* text=auto eol=lf
+
+# Go source is always LF.
+*.go text eol=lf
+
+# Precompiled eBPF objects must never be line-ending normalized.
+*.o binary
+*.mmdb binary

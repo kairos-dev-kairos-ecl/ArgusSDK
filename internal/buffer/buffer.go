@@ -44,32 +44,33 @@ import (
 // fails; callers compute backoff and retry outside the stream.
 var errDrainFailed = fmt.Errorf("drain failed")
 
-// Config holds buffer tuning parameters.
+// Config holds buffer tuning parameters. The mapstructure tags bind the
+// snake_case keys used in agent.yaml (loaded via viper) to these fields.
 type Config struct {
 	// Dir is the directory where WAL segment files are written.
 	// The agent creates it if it does not exist.
-	Dir string
+	Dir string `mapstructure:"dir"`
 
 	// MaxSizeMB is the maximum total disk space the buffer may use.
 	// When exceeded, the oldest segments are dropped. Default: 256.
-	MaxSizeMB int
+	MaxSizeMB int `mapstructure:"max_size_mb"`
 
 	// FlushInterval is how often the agent attempts to drain the buffer
 	// to the configured output connectors when connectivity is restored. Default: 5s.
-	FlushInterval time.Duration
+	FlushInterval time.Duration `mapstructure:"flush_interval"`
 
 	// DrainOnReconnect enables eager drain as soon as a connector reports healthy.
 	// If false, drain is governed solely by FlushInterval. Default: true.
-	DrainOnReconnect bool
+	DrainOnReconnect bool `mapstructure:"drain_on_reconnect"`
 
 	// BackoffBase is the initial reconnect backoff duration. Default: 2s.
-	BackoffBase time.Duration
+	BackoffBase time.Duration `mapstructure:"backoff_base"`
 
 	// BackoffMax is the maximum backoff duration after repeated failures. Default: 5m.
-	BackoffMax time.Duration
+	BackoffMax time.Duration `mapstructure:"backoff_max"`
 
 	// BackoffJitter is the maximum random jitter added per backoff step. Default: 30s.
-	BackoffJitter time.Duration
+	BackoffJitter time.Duration `mapstructure:"backoff_jitter"`
 }
 
 // DefaultConfig returns a Config with production-safe defaults.
