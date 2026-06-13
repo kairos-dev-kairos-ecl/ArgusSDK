@@ -90,11 +90,11 @@ dockers_v2:
     tags:
       - "{{ .Version }}"
       - "latest"
-    dockerfile: Dockerfile
+    # Uses the prebuilt-binary Dockerfile (the root Dockerfile is a from-source
+    # build, whose context needs go.mod which is absent here).
+    dockerfile: packaging/docker/Dockerfile
     platforms:
       - "linux/amd64"
-    build_args:
-      VERSION: "{{ .Version }}"
 
 checksum:
   name_template: "checksums.txt"
