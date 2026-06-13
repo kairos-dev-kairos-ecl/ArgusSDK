@@ -42,10 +42,10 @@ test-llm:
 lint:
 	golangci-lint run ./...
 
-# docker: build distroless/static container image (WS-G5)
+# docker: build distroless/static container image
 docker:
-	@echo "TODO: implement in WS-G5 (distroless/static image, < 20 MB)"
+	docker build -t argus-agent:latest -f Dockerfile .
 
 # install: install argus-agent binary to GOPATH/bin
 install:
-	go install ./cmd/argus
+	go install ./cmd/argus-agent

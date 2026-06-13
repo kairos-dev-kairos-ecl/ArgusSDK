@@ -76,28 +76,69 @@ OS-specific implementations: `internal/collector/euc/linux.go` (eBPF), `windows.
 
 ---
 
-## Quick Start (stub — implementation in progress)
+## Quick Start
 
 ```bash
-# Install
-go install github.com/kairos-dev-kairos-ecl/ArgusSDK/cmd/argus-agent@latest
+# Build
+make build
 
 # Configure
 cp config/agent.example.yaml agent.yaml
-# Edit agent.yaml: set group_id, install_token, and outputs.endpoint
+# Edit agent.yaml: set agent.group_id, auth.install_token, and outputs[].endpoint
 
-# Run (first run triggers registration)
+# Install to GOPATH/bin
+make install
+
+# Run (first run triggers XDR registration)
 argus-agent --config agent.yaml
 ```
 
 Instrument your application:
 
 ```python
-# Python (sends to local agent, not directly to XDR)
+# Python (sends signals to local agent, not directly to XDR)
 from argus_sdk import ArgusClient
 client = ArgusClient(endpoint="http://127.0.0.1:5002")
 client.emit(layer="L9_API_GATEWAY", category="api.request", severity="INFO")
 ```
+
+---
+
+## Observability
+
+The agent exposes health and metrics endpoints for monitoring:
+
+- **Liveness probe** (`GET /_health`) — returns 200 OK if the agent process is alive (configured at `observability.health_check_port`, default :9090)
+- **Readiness probe** (`GET /_ready`) — returns 200 OK if all ingest listeners and output connectors are healthy (same port)
+- **Metrics endpoint** (`GET /metrics`) — Prometheus-format metrics at `observability.metrics_port` (default :9091)
+
+These are commonly used by Kubernetes liveness/readiness probes and fleet monitoring systems. Disable either by leaving the port empty in the config.
+
+---
+
+## Deployment
+
+### XDR Registration Flow
+
+1. **Admin creates Agent Group** in ArgusXDR → receives Group ID + Install Token
+2. **Agent starts** with install_token in config → calls XDR registration endpoint
+3. **XDR verifies token, assigns Instance ID** → stored in encrypted agent-state.json
+4. **Clear install_token** from config after registration succeeds
+5. **Subsequent signal submissions** use Group ID + Instance ID + rotating API credential
+
+### Credential Refresh
+
+The agent automatically rotates API credentials. Fresh credentials are requested on a schedule or after failures. XDR returns new credentials as part of every signal submission response.
+
+### Hot-reload via SIGHUP
+
+Send SIGHUP to the agent process to trigger config reload without restarting:
+
+```bash
+kill -HUP $(pidof argus-agent)
+```
+
+The agent re-reads `config/agent.yaml` and re-binds listeners. Existing connections may experience brief interruption; the buffer preserves in-flight signals.
 
 ---
 
@@ -119,12 +160,17 @@ argus-sdk/
 │   │   ├── argusxdr/       # Mode 1: ArgusSignal proto → XDR
 │   │   ├── kafka/          # Mode 2: OCSF → Kafka
 │   │   ├── splunk/         # Mode 2: OCSF → Splunk HEC
-│   │   └── syslog/         # CEF/ArcSight → syslog server
+│   │   ├── syslog/         # CEF/ArcSight → syslog server
+│   │   └── factory/        # Connector factory (instantiation & registry)
 │   ├── ocsf/               # ArgusSignal → OCSF v1.3 mapper
 │   ├── resilience/         # Circuit breaker, token-bucket rate limiter
-│   └── secrets/            # AES-256-GCM encrypted secrets store
+│   ├── secrets/            # AES-256-GCM encrypted secrets store
+│   └── observability/      # Health checks, metrics, tracing (WS-C v1.0)
 ├── pkg/signal/             # Public signal types (consumed by instrumentation libs)
+├── proto/                  # Protocol buffer definitions (gen/ is generated output)
 ├── config/agent.example.yaml
+├── Dockerfile              # Distroless/static container image
+├── Makefile
 ├── go.mod
 └── README.md
 ```
@@ -140,8 +186,11 @@ argus-sdk/
 | Logging | `go.uber.org/zap` |
 | gRPC | `google.golang.org/grpc` |
 | Protobuf | `google.golang.org/protobuf` |
-| Signal IDs | `github.com/oklog/ulid/v2` |
-| Metrics | `github.com/prometheus/client_golang` |
+| OS telemetry (Linux) | `github.com/cilium/ebpf` |
+| OS telemetry (Windows) | `github.com/0xrawsec/golang-etw` |
+| System metrics | `github.com/shirou/gopsutil/v4` |
+| Kafka connector | `github.com/twmb/franz-go` |
+| Test infrastructure | `github.com/testcontainers/testcontainers-go` |
 
 ---
 

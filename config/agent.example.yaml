@@ -142,3 +142,16 @@ logging:
 
   # format: json (production) | console (development)
   format: "json"
+
+# ---------------------------------------------------------------------------
+# Observability (liveness/readiness/metrics)
+# ---------------------------------------------------------------------------
+observability:
+  # health_check_port is the HTTP port for /_health (liveness) and /_ready
+  # (readiness) probes. Commonly used by Kubernetes and container orchestrators.
+  # Leave empty to disable the health check server.
+  health_check_port: 9090
+
+  # metrics_port is the HTTP port for /metrics (Prometheus format).
+  # Leave empty to disable metrics collection.
+  metrics_port: 9091
