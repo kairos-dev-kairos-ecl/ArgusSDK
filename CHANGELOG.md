@@ -59,8 +59,10 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Native installable service for every platform:
   - **Linux** — `.deb`/`.rpm` packages that install a systemd unit, a default
     config, and a dedicated unprivileged `argus-agent` service user.
-  - **Windows** — runs under the Service Control Manager; `argus-agent service
-    install|uninstall|start|stop` subcommands manage it.
+  - **Windows** — an **MSI installer** that registers and auto-starts the
+    `argus-agent` service and drops a default config; silently installable for
+    MDM/Intune (`msiexec /i … /quiet`). The `argus-agent service ...`
+    subcommands remain for manual setups.
   - **macOS** — launchd plist with `install.sh`/`uninstall.sh` helpers.
 - Distroless static container image (`ghcr.io/kairos-dev-kairos-ecl/argus-agent`)
   and a reference Kubernetes manifest.

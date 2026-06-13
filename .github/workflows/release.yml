@@ -54,6 +54,49 @@ jobs:
             dist/*.rpm
             dist/checksums.txt
 
+  windows-installer:
+    runs-on: windows-latest
+    needs: goreleaser
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the Windows binary from the draft release
+        shell: pwsh
+        run: gh release download ${{ github.ref_name }} --repo ${{ github.repository }} -p "argus-agent_*_windows_amd64.zip" -D dl
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage installer inputs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          $zip = Get-ChildItem dl/*.zip | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath build -Force
+          Copy-Item config/agent.example.yaml build/agent.yaml
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          (Get-Content packaging/windows/argus-agent.wxs) -replace '__VERSION__', $v | Set-Content build/argus-agent.wxs
+
+      - name: Install WiX
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          wix build build/argus-agent.wxs -arch x64 -b build -o "argus-agent_${v}_windows_amd64.msi"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign and upload the MSI
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem argus-agent_*_windows_amd64.msi | Select-Object -First 1).Name
+          cosign sign-blob --yes --output-signature "$msi.sig" --output-certificate "$msi.pem" "$msi"
+          gh release upload ${{ github.ref_name }} "$msi" "$msi.sig" "$msi.pem" --repo ${{ github.repository }} --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   docker:
     runs-on: ubuntu-latest
     needs: goreleaser

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX (v4/v5) installer for the Argus SDK Agent.
+
+  Produces an MSI that:
+    - installs argus-agent.exe to C:\Program Files\ArgusSDK\
+    - registers the "argus-agent" Windows service (auto-start) pointing at the
+      config under C:\ProgramData\argus-agent\agent.yaml
+    - drops a default agent.yaml there (never overwritten on upgrade, so an
+      MDM-pushed config survives)
+    - starts the service on install, stops+removes it on uninstall
+
+  Silent install for MDM/Intune:  msiexec /i argus-agent.msi /quiet
+  The __VERSION__ placeholder is substituted by the release workflow.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Argus SDK Agent"
+      Manufacturer="Kairos Foundation"
+      Version="__VERSION__"
+      UpgradeCode="7E3F2A10-9C4B-4D8E-A1F2-3B5C6D7E8F90"
+      Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Agent binary + Windows service registration. -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ArgusSDK">
+        <Component Id="AgentExe" Bitness="always64">
+          <File Id="argus_agent.exe" Source="argus-agent.exe" KeyPath="yes" />
+          <ServiceInstall
+              Id="ArgusServiceInstall"
+              Name="argus-agent"
+              DisplayName="Argus SDK Agent"
+              Description="Collects LLM and Shadow-AI signals and forwards them to configured destinations."
+              Type="ownProcess"
+              Start="auto"
+              ErrorControl="normal"
+              Arguments="--config &quot;C:\ProgramData\argus-agent\agent.yaml&quot;"
+              Vital="yes" />
+          <ServiceControl
+              Id="ArgusServiceControl"
+              Name="argus-agent"
+              Start="install"
+              Stop="both"
+              Remove="uninstall"
+              Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Default config under C:\ProgramData\argus-agent (preserved on upgrade). -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataFolder" Name="argus-agent">
+        <Component Id="DefaultConfig" Guid="A2B4C6D8-1357-4E9F-8A0B-2C4D6E8F0A12" NeverOverwrite="yes">
+          <File Id="agent.yaml" Source="agent.yaml" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Argus SDK Agent" Level="1">
+      <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="DefaultConfig" />
+    </Feature>
+  </Package>
+</Wix>

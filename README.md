@@ -101,18 +101,26 @@ sudo systemctl status argus-agent          # check it's running
 sudo systemctl reload argus-agent          # apply EUC/log-level changes (SIGHUP)
 ```
 
-### Windows (service)
+### Windows (MSI installer)
 
 ```powershell
-# Extract argus-agent_<version>_windows_amd64.zip, then from that folder:
-.\argus-agent.exe service install --config C:\ProgramData\argus-agent\agent.yaml
-.\argus-agent.exe service start
-# Manage with the same subcommands, or services.msc:
-.\argus-agent.exe service stop
-.\argus-agent.exe service uninstall
+# Interactive: double-click the .msi, or run
+msiexec /i argus-agent_<version>_windows_amd64.msi
+
+# Silent, for MDM / Intune / SCCM:
+msiexec /i argus-agent_<version>_windows_amd64.msi /quiet
 ```
 
-The agent runs under the Windows Service Control Manager and starts at boot.
+The installer registers and starts the **argus-agent** Windows service (auto-start
+at boot) and writes a default config to `C:\ProgramData\argus-agent\agent.yaml`.
+Push your managed config there via MDM, then restart the service to apply:
+
+```powershell
+Restart-Service argus-agent
+```
+
+Uninstall removes the service (`msiexec /x …` or Add/Remove Programs). The binary
+also exposes `argus-agent service install|start|stop|uninstall` for manual setups.
 
 ### macOS (launchd)
 
