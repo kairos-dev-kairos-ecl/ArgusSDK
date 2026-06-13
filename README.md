@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/argus-logo.png" alt="Argus" width="220"/>
+</p>
+
 # ArgusSDK — Signal Collection Agent
 
 ArgusSDK is a standalone, lightweight, config-driven signal collection and forwarding agent written in Go. Its mental model is NXLog: it collects signals from configured sources, normalises them internally, and routes them to configured output destinations.
