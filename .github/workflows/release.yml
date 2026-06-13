@@ -73,6 +73,9 @@ jobs:
           $zip = Get-ChildItem dl/*.zip | Select-Object -First 1
           Expand-Archive -Path $zip.FullName -DestinationPath build -Force
           Copy-Item config/agent.default.yaml build/agent.yaml
+          # The service has no console; write rotating logs to ProgramData so the
+          # deployed agent is observable on disk.
+          Add-Content build/agent.yaml "  file: `"C:\\ProgramData\\argus-agent\\logs\\agent.log`""
           $v = "${{ github.ref_name }}".TrimStart("v")
           (Get-Content packaging/windows/argus-agent.wxs) -replace '__VERSION__', $v | Set-Content build/argus-agent.wxs
 

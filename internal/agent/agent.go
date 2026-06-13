@@ -106,6 +106,9 @@ type TLSConfig struct {
 type LoggingConfig struct {
 	Level  string `mapstructure:"level"`  // "debug" | "info" | "warn" | "error"
 	Format string `mapstructure:"format"` // "json" | "console"
+	// File, when set, enables rotating JSON logs at this path in addition to
+	// stdout. Essential for a Windows service (no console). Empty = stdout only.
+	File string `mapstructure:"file"`
 }
 
 // shutdownTimeout is the maximum time stop() allows for buffer.Flush before
@@ -353,11 +356,18 @@ func (a *Agent) start(ctx context.Context) error {
 	// EUC collector — build-tag-selected OSCollector (eBPF/Linux, ETW/Windows,
 	// sampler/darwin) with the noop as the universal fallback for unprivileged
 	// environments and unsupported targets.
+	// The watch list is the built-in AI-endpoint catalog unioned with any
+	// operator-configured endpoints, so cloud AI tools are detected out of the
+	// box. Local-inference ports fall back to the built-in defaults when unset.
+	localPorts := a.cfg.Ingest.EUC.LocalInferencePorts
+	if len(localPorts) == 0 {
+		localPorts = euc.DefaultLocalInferencePorts()
+	}
 	eucCfg := euc.Config{
 		AppID:               a.cfg.Agent.GroupID,
 		Env:                 a.cfg.Agent.Mode,
-		AIEndpoints:         a.cfg.Ingest.EUC.AIEndpoints,
-		LocalInferencePorts: a.cfg.Ingest.EUC.LocalInferencePorts,
+		AIEndpoints:         euc.MergeAIEndpoints(a.cfg.Ingest.EUC.AIEndpoints),
+		LocalInferencePorts: localPorts,
 	}
 	a.eucCollector = euc.New(eucCfg, euc.NewOSCollector(eucCfg))
 	a.collectors = append(a.collectors, a.eucCollector)

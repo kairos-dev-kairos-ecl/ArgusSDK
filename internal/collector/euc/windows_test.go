@@ -7,7 +7,53 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/0xrawsec/golang-etw/etw"
 )
+
+// TestWindowsHandleDNSEvent verifies the cloud-AI detection path: a DNS-Client
+// query-completed event whose QueryName matches the watch list produces an
+// outbound (IsLocal=false) Observation carrying the hostname. This is the path
+// that detects Copilot/Cursor/Claude/Gemini/etc. by name. It exercises the
+// handler directly (no ETW session, so no elevation needed).
+func TestWindowsHandleDNSEvent(t *testing.T) {
+	c := &windowsCollector{cfg: Config{AIEndpoints: []string{"openai.com"}}}
+
+	mk := func(eventID uint16, qname string) *etw.Event {
+		e := etw.NewEvent()
+		e.System.Provider.Name = dnsClientProvider
+		e.System.EventID = eventID
+		e.EventData["QueryName"] = qname
+		return e
+	}
+
+	out := make(chan Observation, 4)
+	ctx := context.Background()
+
+	// Matching query on the completed event → one outbound Observation.
+	c.handleETWEvent(mk(dnsQueryCompletedEventID, "api.openai.com."), out, ctx)
+	select {
+	case o := <-out:
+		if o.IsLocal {
+			t.Errorf("DNS match should be outbound (IsLocal=false), got %+v", o)
+		}
+		if o.ConnectedHost != "api.openai.com" {
+			t.Errorf("ConnectedHost = %q, want trailing-dot-stripped hostname", o.ConnectedHost)
+		}
+	default:
+		t.Fatal("expected an Observation for a matching DNS query, got none")
+	}
+
+	// Non-matching host → no Observation.
+	c.handleETWEvent(mk(dnsQueryCompletedEventID, "example.com"), out, ctx)
+	// Non-completed event id → ignored even if it matches.
+	c.handleETWEvent(mk(3006, "api.openai.com"), out, ctx)
+	select {
+	case o := <-out:
+		t.Errorf("expected no Observation, got %+v", o)
+	default:
+	}
+}
 
 // TestWindowsCollectorDegradeOnNoRights verifies the low-privilege contract:
 // when ETW rights are absent (plain user), Start returns nil (no crash, no error).

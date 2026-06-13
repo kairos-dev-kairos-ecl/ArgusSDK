@@ -62,20 +62,35 @@ When output connectors are unreachable, signals queue locally in the agent using
 On enterprise endpoints, the agent's **sole purpose** is detecting which AI services are being accessed. It does not duplicate existing EDR telemetry (no general process enumeration, file access monitoring, or memory inspection).
 
 **What the EUC collector watches:**
-- DNS queries and TCP connections to known AI service endpoints (config-driven, hot-reloadable list)
-- Local AI runtime detection on known inference ports (Ollama :11434, LM Studio :1234, etc.)
-- Corporate proxy/DNS telemetry where available
+- **Cloud AI services, by hostname.** It matches DNS queries against a built-in
+  catalog of AI services (OpenAI, Anthropic, Gemini, GitHub Copilot, Cursor,
+  Windsurf/Codeium, Cody, Tabnine, etc.), extendable via `ingest.euc.ai_endpoints`.
+  This is how it detects AI coding assistants and chat tools used on an endpoint.
+- **Local AI runtimes**, by port (Ollama :11434, LM Studio :1234, vLLM :8000).
 
 **What it explicitly does not do:**
 - General process enumeration or monitoring
-- File system access monitoring  
+- File system access monitoring
 - Full network flow capture
 - Content inspection of AI API payloads
+- **Blocking/enforcement** — the agent is observe-only by design. Controlling or
+  blocking unauthorized AI tools is a separate (future) enforcement capability.
 
 OS-specific implementations:
-- `linux.go` — eBPF kprobe observer on `tcp_v4/v6_connect` + gopsutil local-port sampler (degrades gracefully without `CAP_BPF`)
-- `windows.go` — ETW Kernel-Network provider
-- `darwin.go` — no-root established-connection sampler via gopsutil (a full `NEDNSProxyProvider` Network Extension is deferred; it requires a signed, notarized `.app` with a managed entitlement, which is not distributable as a `go install` CLI)
+- `windows.go` — ETW: **DNS-Client** provider for hostname-based cloud-AI
+  detection + Kernel-Network for connection metadata, plus a gopsutil local-port
+  sampler. Requires the service's LocalSystem context (or Performance Log Users)
+  for the ETW session; degrades to local-port sampling otherwise.
+- `linux.go` — eBPF kprobe on `tcp_v4/v6_connect` + gopsutil local-port sampler
+  (degrades gracefully without `CAP_BPF`). DNS-based hostname capture is the next
+  increment; today Linux reliably detects local inference.
+- `darwin.go` — no-root established-connection sampler via gopsutil. A full
+  `NEDNSProxyProvider` Network Extension (for hostname capture) is deferred — it
+  requires a signed, notarized `.app` with a managed entitlement.
+
+> **Detection vs. control.** v1.x delivers *visibility* (which AI tools are in
+> use). Hostname detection is live on Windows (DNS-Client ETW); Linux/macOS DNS
+> capture and a policy-driven enforcement layer are on the roadmap.
 
 ---
 

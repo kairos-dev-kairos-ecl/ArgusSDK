@@ -4,7 +4,21 @@ All notable changes to ArgusSDK are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] — 2026-06-14
+## [1.1.0] — 2026-06-14
+
+### Added
+- **Cloud-AI tool detection (Windows).** The EUC collector now captures DNS
+  queries via the `Microsoft-Windows-DNS-Client` ETW provider and matches the
+  hostname against the watch list — so it detects cloud AI tools (GitHub Copilot,
+  Cursor, Windsurf/Codeium, Claude, ChatGPT, Gemini, etc.) by name. Previously
+  only local inference runtimes were reliably detected, because the connect-event
+  path only saw destination IPs, which never match a hostname list. (Linux eBPF
+  DNS and macOS NE DNS-proxy capture are the next platform increments.)
+- **Built-in AI-endpoint catalog** of common AI services, always active and
+  unioned with any operator-configured `ingest.euc.ai_endpoints`.
+- **File logging** (`logging.file`) with size/age rotation, written in addition
+  to stdout — so a deployed service (which has no console) is observable on disk.
+  The Windows installer points it at `C:\ProgramData\argus-agent\logs\agent.log`.
 
 ### Fixed
 - **Output delivery for named connectors.** Connectors were registered under
@@ -93,5 +107,5 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Encrypted-at-rest agent state (AES-256-GCM).
 - Runs as a non-root user in the container image.
 
-[1.0.1]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.1
+[1.1.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.0

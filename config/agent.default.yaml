@@ -27,11 +27,13 @@ ingest:
     # Local gRPC endpoint that instrumentation libraries connect to.
     grpc: "127.0.0.1:5002"
   euc:
-    # Shadow-AI watch list (hot-reloadable; edit and reload to apply).
-    ai_endpoints:
-      - "api.openai.com"
-      - "api.anthropic.com"
-      - "generativelanguage.googleapis.com"
+    # Shadow-AI watch list. A built-in catalog of common AI services (OpenAI,
+    # Anthropic, Gemini, GitHub Copilot, Cursor, Windsurf/Codeium, etc.) is
+    # ALWAYS active; entries here are ADDED to it (e.g. an internal LLM gateway).
+    # Cloud-AI tools are detected by the hostname seen in DNS queries.
+    ai_endpoints: []
+    #  - "llm-gateway.corp.example"
+    # Local AI-runtime ports (Ollama, LM Studio, vLLM). Defaults applied if empty.
     local_inference_ports:
       - 11434
       - 1234
@@ -49,6 +51,10 @@ outputs:
 logging:
   level: "info"
   format: "json"
+  # file: when set, writes rotating JSON logs here in addition to stdout.
+  # Important for a service (no console). The Windows installer sets this to
+  # C:\ProgramData\argus-agent\logs\agent.log automatically.
+  # file: "/var/log/argus-agent/agent.log"
 
 observability:
   addr: "127.0.0.1:9090"

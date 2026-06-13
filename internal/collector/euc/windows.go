@@ -54,6 +54,17 @@ const (
 	// explicitly rejected (T-06-07).
 	kernelNetworkProvider = "Microsoft-Windows-Kernel-Network"
 
+	// dnsClientProvider is the ETW provider for DNS queries. It yields the
+	// queried hostname (QueryName), which is what lets the collector detect
+	// cloud AI tools (Copilot, Cursor, Claude, Gemini, etc.) by name — the
+	// Kernel-Network path only sees destination IPs, which never match a
+	// hostname watch list.
+	dnsClientProvider = "Microsoft-Windows-DNS-Client"
+
+	// dnsQueryCompletedEventID is the DNS-Client "query completed" event (3008),
+	// which carries QueryName for a resolved lookup.
+	dnsQueryCompletedEventID = 3008
+
 	// gopsutilInterval is how often the local-inference port sampler polls
 	// the OS connection table (via gopsutil, no elevation required).
 	gopsutilInterval = 5 * time.Second
@@ -111,6 +122,15 @@ func (c *windowsCollector) startETW(ctx context.Context, out chan<- Observation)
 		return
 	}
 
+	// DNS-Client provider: gives us the queried hostname so cloud AI services are
+	// detected by name. Degrade (keep kernel-network + local ports) if it fails.
+	if err := s.EnableProvider(etw.MustParseProvider(dnsClientProvider)); err != nil {
+		c.log.Warn("DNS-Client ETW provider enable failed; cloud-AI hostname detection degraded",
+			zap.String("provider", dnsClientProvider),
+			zap.Error(err),
+		)
+	}
+
 	cons := etw.NewRealTimeConsumer(ctx)
 	cons.FromSessions(s)
 
@@ -136,9 +156,48 @@ func (c *windowsCollector) startETW(ctx context.Context, out chan<- Observation)
 	}()
 }
 
-// handleETWEvent processes a single ETW event from Microsoft-Windows-Kernel-Network.
-// ETW event fields are untrusted input — all values are bounded before use (V5 / T-06-08).
+// handleETWEvent dispatches an ETW event to the DNS or network handler based on
+// its provider. ETW event fields are untrusted input — all values are bounded
+// before use (V5 / T-06-08).
 func (c *windowsCollector) handleETWEvent(e *etw.Event, out chan<- Observation, ctx context.Context) {
+	if e.System.Provider.Name == dnsClientProvider {
+		c.handleDNSEvent(e, out, ctx)
+		return
+	}
+	c.handleNetworkEvent(e, out, ctx)
+}
+
+// handleDNSEvent processes a Microsoft-Windows-DNS-Client query-completed event.
+// The QueryName is matched against the AI-endpoint catalog by hostname — this is
+// the cloud-AI detection path (Copilot, Cursor, Claude, Gemini, etc.).
+func (c *windowsCollector) handleDNSEvent(e *etw.Event, out chan<- Observation, ctx context.Context) {
+	if int(e.System.EventID) != dnsQueryCompletedEventID {
+		return
+	}
+	qname := boundedField(e, "QueryName")
+	if qname == "" {
+		return
+	}
+	// Normalize the trailing dot some resolvers include.
+	qname = strings.TrimSuffix(qname, ".")
+	if !matchHost(qname, c.cfg.AIEndpoints) {
+		return
+	}
+
+	obs := Observation{
+		ConnectedHost: qname,
+		IsLocal:       false,
+		ProcessName:   pidToName(e.System.Execution.ProcessID),
+	}
+	select {
+	case out <- obs:
+	case <-ctx.Done():
+	}
+}
+
+// handleNetworkEvent processes a single ETW event from Microsoft-Windows-Kernel-Network.
+// ETW event fields are untrusted input — all values are bounded before use (V5 / T-06-08).
+func (c *windowsCollector) handleNetworkEvent(e *etw.Event, out chan<- Observation, ctx context.Context) {
 	// PID from the kernel event header (trustworthy, not a string field).
 	pid := e.System.Execution.ProcessID
 

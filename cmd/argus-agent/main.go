@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/agent"
 )
@@ -97,13 +99,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 func buildLogger() (*zap.Logger, zap.AtomicLevel, error) {
 	level := viper.GetString("logging.level")
 	format := viper.GetString("logging.format")
-
-	var zapCfg zap.Config
-	if format == "console" {
-		zapCfg = zap.NewDevelopmentConfig()
-	} else {
-		zapCfg = zap.NewProductionConfig()
-	}
+	logFile := viper.GetString("logging.file")
 
 	var atomicLevel zap.AtomicLevel
 	switch level {
@@ -116,11 +112,37 @@ func buildLogger() (*zap.Logger, zap.AtomicLevel, error) {
 	default:
 		atomicLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
-	zapCfg.Level = atomicLevel
 
-	logger, err := zapCfg.Build()
-	if err != nil {
-		return nil, atomicLevel, err
+	// Console/stdout core.
+	encCfg := zap.NewProductionEncoderConfig()
+	encCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	var consoleEnc zapcore.Encoder
+	if format == "console" {
+		consoleEnc = zapcore.NewConsoleEncoder(encCfg)
+	} else {
+		consoleEnc = zapcore.NewJSONEncoder(encCfg)
 	}
+	cores := []zapcore.Core{
+		zapcore.NewCore(consoleEnc, zapcore.AddSync(os.Stdout), atomicLevel),
+	}
+
+	// Optional rotating file core. A Windows service (or any daemon) has no
+	// console, so logging.file makes a deployed agent observable on disk. The
+	// file is always JSON for machine parsing; lumberjack creates parent dirs
+	// and rotates by size/age.
+	if logFile != "" {
+		fileWriter := zapcore.AddSync(&lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    50, // MB per file before rotation
+			MaxBackups: 5,
+			MaxAge:     30, // days
+			Compress:   true,
+		})
+		cores = append(cores, zapcore.NewCore(
+			zapcore.NewJSONEncoder(encCfg), fileWriter, atomicLevel,
+		))
+	}
+
+	logger := zap.New(zapcore.NewTee(cores...), zap.AddCaller())
 	return logger, atomicLevel, nil
 }
