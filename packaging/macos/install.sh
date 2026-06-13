@@ -17,9 +17,11 @@ install -m 0755 argus-agent "$PREFIX/argus-agent"
 
 mkdir -p "$CONFDIR"
 if [ ! -f "$CONFDIR/agent.yaml" ]; then
-    install -m 0644 config/agent.example.yaml "$CONFDIR/agent.yaml"
-    echo "Installed default config to $CONFDIR/agent.yaml — edit it before starting."
+    install -m 0644 config/agent.default.yaml "$CONFDIR/agent.yaml"
+    echo "Installed default config to $CONFDIR/agent.yaml (local mode; edit to configure outputs)."
 fi
+# Full remote/XDR reference for operators.
+install -m 0644 config/agent.example.yaml "$CONFDIR/agent.example.yaml"
 
 mkdir -p /var/lib/argus-agent /var/log/argus-agent
 

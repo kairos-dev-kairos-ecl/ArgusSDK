@@ -113,7 +113,9 @@ msiexec /i argus-agent_<version>_windows_amd64.msi /quiet
 
 The installer registers and starts the **argus-agent** Windows service (auto-start
 at boot) and writes a default config to `C:\ProgramData\argus-agent\agent.yaml`.
-Push your managed config there via MDM, then restart the service to apply:
+The default runs in **local mode** so the service starts immediately with no
+credentials; push your managed config (or switch to `mode: remote`) via MDM, then
+restart the service to apply:
 
 ```powershell
 Restart-Service argus-agent

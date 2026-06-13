@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 
@@ -24,7 +25,7 @@ const (
 // runAgentLifecycle runs as a Windows service when launched by the Service
 // Control Manager, and as a normal console process otherwise (e.g. when run
 // directly from a terminal for debugging).
-func runAgentLifecycle(a *agent.Agent) error {
+func runAgentLifecycle(a *agent.Agent, logger *zap.Logger) error {
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		return fmt.Errorf("determine windows service context: %w", err)
@@ -32,22 +33,35 @@ func runAgentLifecycle(a *agent.Agent) error {
 	if !isService {
 		return a.Run()
 	}
-	return svc.Run(serviceName, &argusService{agent: a})
+	return svc.Run(serviceName, &argusService{agent: a, logger: logger})
 }
 
 // argusService adapts the agent lifecycle to the Windows Service Control Manager.
-type argusService struct{ agent *agent.Agent }
+type argusService struct {
+	agent  *agent.Agent
+	logger *zap.Logger
+}
 
-// Execute is the SCM entry point. It starts the agent, reports Running, then
-// handles Stop/Shutdown by gracefully stopping the agent.
+// Execute is the SCM entry point. It kicks off agent startup in the background
+// and reports Running immediately, then handles Stop/Shutdown by gracefully
+// stopping the agent.
+//
+// Startup is backgrounded deliberately: the SCM kills a service that does not
+// report Running within its start timeout (~30s), and agent startup may do
+// networked work (XDR registration). Blocking here on a slow or misconfigured
+// endpoint would surface to the operator as "service failed to start". Instead
+// the service reports Running promptly and logs any startup error.
 func (s *argusService) Execute(_ []string, r <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 
 	status <- svc.Status{State: svc.StartPending}
-	if err := s.agent.Start(context.Background()); err != nil {
-		// Non-zero exit code signals a service-specific error to the SCM.
-		return false, 1
-	}
+
+	go func() {
+		if err := s.agent.Start(context.Background()); err != nil {
+			s.logger.Error("agent start failed; service is running but idle until the config is corrected", zap.Error(err))
+		}
+	}()
+
 	status <- svc.Status{State: svc.Running, Accepts: accepted}
 
 	for c := range r {

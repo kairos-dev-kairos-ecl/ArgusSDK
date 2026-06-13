@@ -51,8 +51,11 @@ and forwarding agent for LLM applications and enterprise endpoints.
   Prometheus-format `/metrics` (dispatcher counters).
 - Bounded SIGHUP hot-reload: re-applies the EUC watch list and log level without
   a restart. Transport, auth, and output topology require a restart by design.
-- Single canonical sample configuration (`config/agent.example.yaml`), validated
-  by a drift-guard test so documented keys cannot diverge from the code.
+- Installers ship a safe local-mode default config (`config/agent.default.yaml`)
+  so the service starts immediately with no credentials; the full remote/XDR
+  reference (`config/agent.example.yaml`) is shipped alongside. The Windows
+  service backgrounds startup so a slow/misconfigured endpoint can never block
+  the SCM start. Config is validated by a drift-guard test.
 - `argus-agent --version` reports the build version.
 
 **Packaging & distribution**

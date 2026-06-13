@@ -72,7 +72,7 @@ jobs:
           New-Item -ItemType Directory -Force build | Out-Null
           $zip = Get-ChildItem dl/*.zip | Select-Object -First 1
           Expand-Archive -Path $zip.FullName -DestinationPath build -Force
-          Copy-Item config/agent.example.yaml build/agent.yaml
+          Copy-Item config/agent.default.yaml build/agent.yaml
           $v = "${{ github.ref_name }}".TrimStart("v")
           (Get-Content packaging/windows/argus-agent.wxs) -replace '__VERSION__', $v | Set-Content build/argus-agent.wxs
 

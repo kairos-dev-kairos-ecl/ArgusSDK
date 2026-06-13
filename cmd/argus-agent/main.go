@@ -91,7 +91,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	// Service Control Manager when launched as a service (and falls back to
 	// console mode otherwise); elsewhere it runs in the foreground under
 	// systemd/launchd supervision.
-	return runAgentLifecycle(a)
+	return runAgentLifecycle(a, logger)
 }
 
 func buildLogger() (*zap.Logger, zap.AtomicLevel, error) {

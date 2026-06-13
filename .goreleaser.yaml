@@ -44,6 +44,7 @@ archives:
       - NOTICE
       - README.md
       - CHANGELOG.md
+      - config/agent.default.yaml
       - config/agent.example.yaml
       - packaging/systemd/argus-agent.service
       - packaging/launchd/org.kairos-foundation.argus-agent.plist
@@ -71,9 +72,13 @@ nfpms:
     contents:
       - src: packaging/systemd/argus-agent.service
         dst: /lib/systemd/system/argus-agent.service
-      - src: config/agent.example.yaml
+      # Safe local-mode default so the service starts cleanly on install.
+      - src: config/agent.default.yaml
         dst: /etc/argus-agent/agent.yaml
         type: config|noreplace
+      # Full remote/XDR reference, shipped alongside for operators.
+      - src: config/agent.example.yaml
+        dst: /etc/argus-agent/agent.example.yaml
       - dst: /var/lib/argus-agent
         type: dir
         file_info:

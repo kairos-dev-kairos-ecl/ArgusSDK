@@ -1,0 +1,54 @@
+# argus-agent — default configuration installed by the OS packages/installers.
+#
+# This is a SAFE starting point: it runs in LOCAL mode so the service starts
+# immediately, with no credentials and no network dependency. Configure the
+# output endpoint below to begin forwarding; until it is reachable, signals are
+# buffered locally and delivered once it comes online.
+#
+# For a fleet/XDR deployment, switch to mode: remote and set xdr_endpoint +
+# auth.install_token (see agent.example.yaml for the full reference), then apply:
+#   Windows: Restart-Service argus-agent
+#   Linux:   sudo systemctl restart argus-agent
+
+agent:
+  instance_name: "argus-agent"
+  # "local"  = no XDR registration, no credentials required (starts immediately).
+  # "remote" = TLS 1.3 + XDR registration (requires xdr_endpoint + install token).
+  mode: "local"
+
+auth:
+  # A local instance id so the agent starts without contacting XDR. In remote
+  # mode, leave instance_id empty and set install_token instead (XDR assigns the
+  # real id on first registration).
+  instance_id: "argus-local"
+
+ingest:
+  listen:
+    # Local gRPC endpoint that instrumentation libraries connect to.
+    grpc: "127.0.0.1:5002"
+  euc:
+    # Shadow-AI watch list (hot-reloadable; edit and reload to apply).
+    ai_endpoints:
+      - "api.openai.com"
+      - "api.anthropic.com"
+      - "generativelanguage.googleapis.com"
+    local_inference_ports:
+      - 11434
+      - 1234
+      - 8000
+
+# At least one output is required. Replace the placeholder endpoint with your
+# destination (ArgusXDR ingest, or set type: kafka/splunk_hec/elastic/syslog).
+outputs:
+  - name: "argusxdr"
+    type: "argusxdr"
+    endpoint: "127.0.0.1:5099" # <-- replace with your XDR/SIEM ingest endpoint
+    tls:
+      enabled: false # enable TLS once pointing at a real (non-loopback) endpoint
+
+logging:
+  level: "info"
+  format: "json"
+
+observability:
+  addr: "127.0.0.1:9090"
