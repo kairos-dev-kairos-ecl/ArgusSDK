@@ -64,7 +64,7 @@ func initConfig() {
 }
 
 func runAgent(_ *cobra.Command, _ []string) error {
-	logger, err := buildLogger()
+	logger, atomicLevel, err := buildLogger()
 	if err != nil {
 		return fmt.Errorf("logger init: %w", err)
 	}
@@ -80,10 +80,12 @@ func runAgent(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("agent init: %w", err)
 	}
 
+	a.SetReloadSources(cfgFile, atomicLevel)
+
 	return a.Run()
 }
 
-func buildLogger() (*zap.Logger, error) {
+func buildLogger() (*zap.Logger, zap.AtomicLevel, error) {
 	level := viper.GetString("logging.level")
 	format := viper.GetString("logging.format")
 
@@ -94,16 +96,22 @@ func buildLogger() (*zap.Logger, error) {
 		zapCfg = zap.NewProductionConfig()
 	}
 
+	var atomicLevel zap.AtomicLevel
 	switch level {
 	case "debug":
-		zapCfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		atomicLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
 	case "warn":
-		zapCfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+		atomicLevel = zap.NewAtomicLevelAt(zap.WarnLevel)
 	case "error":
-		zapCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+		atomicLevel = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	default:
-		zapCfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		atomicLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
+	zapCfg.Level = atomicLevel
 
-	return zapCfg.Build()
+	logger, err := zapCfg.Build()
+	if err != nil {
+		return nil, atomicLevel, err
+	}
+	return logger, atomicLevel, nil
 }

@@ -144,6 +144,16 @@ type Agent struct {
 
 	// wg tracks the ingest loop goroutine so stop() can wait for it to exit.
 	wg sync.WaitGroup
+
+	// configPath is the path to the agent configuration file, set by SetReloadSources.
+	configPath string
+
+	// atomicLevel is the live zap.AtomicLevel for hot-reload, set by SetReloadSources.
+	atomicLevel zap.AtomicLevel
+
+	// eucCollector is a reference to the EUC collector for hot-reload watch list updates,
+	// populated during start().
+	eucCollector *euc.Collector
 }
 
 // New creates an Agent from the provided config. Components are wired but not started.
@@ -155,6 +165,13 @@ func New(cfg *Config, logger *zap.Logger) (*Agent, error) {
 		logger = zap.NewNop()
 	}
 	return &Agent{cfg: cfg, logger: logger}, nil
+}
+
+// SetReloadSources sets the configuration file path and live AtomicLevel for SIGHUP hot-reload.
+// Must be called before Run().
+func (a *Agent) SetReloadSources(configPath string, level zap.AtomicLevel) {
+	a.configPath = configPath
+	a.atomicLevel = level
 }
 
 // Run starts the agent, blocks until a SIGINT/SIGTERM is received, then shuts down.
@@ -170,12 +187,20 @@ func (a *Agent) Run() error {
 
 	// Block until OS signal
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	// TODO: SIGHUP hot-reload hook — add in a follow-on phase (syscall.SIGHUP)
-	<-sigCh
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	a.logger.Info("shutdown signal received")
-	return a.stop()
+	for {
+		sig := <-sigCh
+		switch sig {
+		case syscall.SIGHUP:
+			if err := a.reloadConfig(); err != nil {
+				a.logger.Error("config reload failed", zap.Error(err))
+			}
+		case syscall.SIGINT, syscall.SIGTERM:
+			a.logger.Info("shutdown signal received")
+			return a.stop()
+		}
+	}
 }
 
 // start initialises and starts all components.
@@ -294,7 +319,8 @@ func (a *Agent) start(ctx context.Context) error {
 		AppID: a.cfg.Agent.GroupID,
 		Env:   a.cfg.Agent.Mode,
 	}
-	a.collectors = append(a.collectors, euc.New(eucCfg, euc.NewOSCollector(eucCfg)))
+	a.eucCollector = euc.New(eucCfg, euc.NewOSCollector(eucCfg))
+	a.collectors = append(a.collectors, a.eucCollector)
 
 	// 6. Start ingest loop goroutine.
 	a.ingestCh = make(chan pkgsignal.Batch, 256)

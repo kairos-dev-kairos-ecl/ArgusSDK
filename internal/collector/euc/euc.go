@@ -17,6 +17,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/collector"
@@ -62,6 +63,13 @@ type Observation struct {
 	Username string
 }
 
+// watchList holds the mutable AI endpoints and local inference ports.
+// Stored in atomic.Value for lock-free hot-reload.
+type watchList struct {
+	endpoints []string
+	ports     []int
+}
+
 // OSCollector is the interface each platform must implement.
 // The exported Collector (below) wraps an OSCollector.
 type OSCollector interface {
@@ -77,12 +85,18 @@ type OSCollector interface {
 type Collector struct {
 	cfg  Config
 	impl OSCollector
+	watch atomic.Value // holds *watchList; init with Config.AIEndpoints + LocalInferencePorts
 }
 
 // New creates an EUC collector wrapping the provided OS-specific implementation.
 // Call newOSCollector() from the appropriate build-tag file to obtain impl.
 func New(cfg Config, impl OSCollector) *Collector {
-	return &Collector{cfg: cfg, impl: impl}
+	c := &Collector{cfg: cfg, impl: impl}
+	c.watch.Store(&watchList{
+		endpoints: append([]string{}, cfg.AIEndpoints...),
+		ports:     append([]int{}, cfg.LocalInferencePorts...),
+	})
+	return c
 }
 
 // Name implements collector.Collector.
@@ -185,6 +199,22 @@ func (c *Collector) Health(ctx context.Context) error {
 // Close stops the OS collector.
 func (c *Collector) Close() error {
 	return c.impl.Close()
+}
+
+// UpdateWatchList atomically updates the list of AI endpoints and local inference ports.
+// Copies are made to prevent race conditions on the caller's slices.
+func (c *Collector) UpdateWatchList(endpoints []string, ports []int) {
+	c.watch.Store(&watchList{
+		endpoints: append([]string{}, endpoints...),
+		ports:     append([]int{}, ports...),
+	})
+}
+
+// WatchList returns the current list of AI endpoints and local inference ports.
+// Copies are made to prevent race conditions.
+func (c *Collector) WatchList() ([]string, []int) {
+	w := c.watch.Load().(*watchList)
+	return append([]string{}, w.endpoints...), append([]int{}, w.ports...)
 }
 
 // ensure Collector satisfies collector.Collector at compile time.
