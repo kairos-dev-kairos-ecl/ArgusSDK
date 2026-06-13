@@ -77,7 +77,9 @@ jobs:
           (Get-Content packaging/windows/argus-agent.wxs) -replace '__VERSION__', $v | Set-Content build/argus-agent.wxs
 
       - name: Install WiX
-        run: dotnet tool install --global wix
+        # Pin to v5: WiX v6/v7 require accepting the OSMF EULA (error WIX7015),
+        # which can't be done non-interactively. v5 uses the same v4 wxs schema.
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Build MSI
         shell: pwsh
