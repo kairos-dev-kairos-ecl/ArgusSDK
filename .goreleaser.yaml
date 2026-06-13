@@ -83,15 +83,18 @@ nfpms:
       postinstall: packaging/nfpm/postinstall.sh
       preremove: packaging/nfpm/preremove.sh
 
-dockers:
-  - image_templates:
-      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent:{{ .Version }}"
-      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent:latest"
+dockers_v2:
+  - id: argus-agent
+    images:
+      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
     dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--build-arg=VERSION={{ .Version }}"
+    platforms:
+      - "linux/amd64"
+    build_args:
+      VERSION: "{{ .Version }}"
 
 checksum:
   name_template: "checksums.txt"
@@ -128,26 +131,10 @@ docker_signs:
     artifacts: all
     output: true
 
-# Homebrew tap formula — free macOS/Linux CLI install with no Gatekeeper
-# friction (brew-installed binaries are not quarantined). The formula is
-# generated on every release; pushing to the tap stays OFF until you:
-#   1. create the repo  kairos-dev-kairos-ecl/homebrew-tap
-#   2. add a PAT secret HOMEBREW_TAP_GITHUB_TOKEN with repo scope
-#   3. set skip_upload to "false" and add the repository.token field below
-# Until then the formula is built into dist/ for inspection only.
-brews:
-  - name: argus-agent
-    repository:
-      owner: kairos-dev-kairos-ecl
-      name: homebrew-tap
-    skip_upload: "true"
-    homepage: "https://kairos-foundation.org"
-    description: "Argus SDK Agent — LLM and Shadow-AI signal collection and forwarding"
-    license: "Apache-2.0"
-    install: |
-      bin.install "argus-agent"
-    test: |
-      system "#{bin}/argus-agent", "--version"
+# Homebrew distribution (free macOS/Linux CLI install, no Gatekeeper friction)
+# is documented in docs/RELEASING.md as an opt-in step. It is intentionally not
+# configured here yet — it requires a separate tap repo + token, and is added
+# with the current schema when activated.
 
 release:
   github:
