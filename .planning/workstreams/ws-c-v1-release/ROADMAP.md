@@ -17,7 +17,7 @@ both complete.
 
 - [x] **Phase 5: XDR Mode-1 Registration & Credential Lifecycle** (complete 2026-06-12)
 - [x] **Phase 6: EUC OS Collectors — Linux eBPF + Windows ETW/WFP + macOS Network Extension** (complete 2026-06-12)
-- [ ] **Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup**
+- [x] **Phase 7: Release Hardening — OCSF Fidelity, Hot-Reload, Docs/Config/CI Cleanup** (complete 2026-06-13)
 
 ## Phase Details
 
@@ -107,7 +107,7 @@ release on a real runner.
 **Plans:** 4 plans across 2 waves (plan-checked + revised 2026-06-12)
 
 Plans:
-- [ ] 07-01-PLAN.md — OCSF fidelity: injectable clock + web_resources/databucket first-class + honest URL [Wave 1]
-- [ ] 07-02-PLAN.md — bounded SIGHUP hot-reload (EUC watch list + log level) [Wave 1]
-- [ ] 07-03-PLAN.md — sample-config consolidation + buffer mapstructure tags + README sync + Makefile + milestone record [Wave 2]
-- [ ] 07-04-PLAN.md — CI completeness (build/vet/race/integration + cross-compile/isolation matrix) [Wave 1/2]
+- [x] 07-01-PLAN.md — OCSF fidelity: injectable clock + web_resources/databucket first-class + honest URL [Wave 1]
+- [x] 07-02-PLAN.md — bounded SIGHUP hot-reload (EUC watch list + log level) [Wave 1]
+- [x] 07-03-PLAN.md — sample-config consolidation + buffer mapstructure tags + README sync + Makefile + milestone record [Wave 2]
+- [x] 07-04-PLAN.md — CI completeness (build/vet/race/integration + cross-compile/isolation matrix) [Wave 1/2]

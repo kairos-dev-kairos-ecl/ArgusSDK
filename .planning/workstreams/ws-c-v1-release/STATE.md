@@ -4,29 +4,32 @@ milestone: v1.0
 milestone_name: v1-release
 current_phase: 07
 current_plan: null
-status: in_progress
-stopped_at: "Phase 7 Wave 1: 07-01 (OCSF fidelity) + 07-02 (SIGHUP hot-reload) complete. Merged to main. Next: 07-04 (CI completeness), 07-03 (Wave 2), Phase 7 verification."
+status: complete
+stopped_at: "Phase 7 Release Hardening COMPLETE. All 4 plans done: 07-01 (OCSF fidelity), 07-02 (SIGHUP hot-reload), 07-03 (config/docs/Makefile/milestone), 07-04 (CI completeness). All merged to main. Ready for v1.0 RC."
 last_updated: "2026-06-13T00:00:00Z"
 last_activity: 2026-06-13
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 11
-  completed_plans: 9
-  percent: 82
+  completed_plans: 11
+  percent: 100
 ---
 
 # WS-C v1.0 Release Hardening — State
 
 ## Current Position
 
-Phase: 07 (Release Hardening) — IN PROGRESS  
-**Status:** Wave 1 complete (07-01 + 07-02); Wave 2 + verification pending.
+Phase: 07 (Release Hardening) — COMPLETE ✅  
+**Status:** All 4 plans delivered and verified on main.
 **Last Activity:** 2026-06-13
-**Last Activity Description:** Phase 7 Wave 1 complete.
-- 07-01 (OCSF fidelity): Injectable clock on Mapper; first-class WebResources/Databucket on Event; honest HTTP URL (never s.Category). Tests green.
-- 07-02 (SIGHUP hot-reload): Bounded reload (EUC watch list + log level only). EUC collector UpdateWatchList/WatchList seam; buildLogger returns live AtomicLevel; reloadConfig in reload.go; SIGHUP signal handler in agent.Run(). Tests green.
-Both merged to main. Next: 07-04 (CI completeness), 07-03 (Wave 2: config/docs/Makefile), Phase 7 verification, tracking update.
+**Deliverables:**
+- 07-01 (OCSF fidelity): Injectable clock, first-class WebResources/Databucket, honest HTTP URL
+- 07-02 (SIGHUP hot-reload): Bounded EUC + log-level reload, signal handler
+- 07-03 (Config/Docs/Makefile): agent.example.yaml, README sync, Makefile fixes, WORKSTREAMS.md milestone record
+- 07-04 (CI completeness): All jobs green (build/vet/race/integration/euc-cross-compile)
+
+**v1.0 Release Status:** READY FOR RC — All phases (5/6/7) complete, 11/11 plans executed, verification passing.
 
 ## Phases
 
