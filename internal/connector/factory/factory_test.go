@@ -8,8 +8,8 @@ import (
 	"github.com/kairos-dev-kairos-ecl/ArgusSDK/internal/connector/factory"
 )
 
-// TestBuildKafka verifies that Build returns a connector whose Name() is "kafka"
-// when Type is "kafka".
+// TestBuildKafka verifies that Build returns a connector whose Name() is the
+// configured output name (used for dispatch routing), not the connector type.
 func TestBuildKafka(t *testing.T) {
 	in := factory.FactoryInput{
 		Name:     "my-kafka",
@@ -26,8 +26,8 @@ func TestBuildKafka(t *testing.T) {
 	if c == nil {
 		t.Fatal("Build(kafka) returned nil connector")
 	}
-	if c.Name() != "kafka" {
-		t.Fatalf("Build(kafka) Name() = %q, want %q", c.Name(), "kafka")
+	if c.Name() != "my-kafka" {
+		t.Fatalf("Build(kafka) Name() = %q, want output name %q", c.Name(), "my-kafka")
 	}
 }
 
@@ -47,8 +47,8 @@ func TestBuildSplunk(t *testing.T) {
 	if c == nil {
 		t.Fatal("Build(splunk_hec) returned nil connector")
 	}
-	if c.Name() != "splunk_hec" {
-		t.Fatalf("Build(splunk_hec) Name() = %q, want %q", c.Name(), "splunk_hec")
+	if c.Name() != "my-splunk" {
+		t.Fatalf("Build(splunk_hec) Name() = %q, want output name %q", c.Name(), "my-splunk")
 	}
 }
 
@@ -68,8 +68,8 @@ func TestBuildElastic(t *testing.T) {
 	if c == nil {
 		t.Fatal("Build(elastic) returned nil connector")
 	}
-	if c.Name() != "elastic" {
-		t.Fatalf("Build(elastic) Name() = %q, want %q", c.Name(), "elastic")
+	if c.Name() != "my-elastic" {
+		t.Fatalf("Build(elastic) Name() = %q, want output name %q", c.Name(), "my-elastic")
 	}
 }
 
@@ -91,8 +91,8 @@ func TestBuildSyslog(t *testing.T) {
 	if c == nil {
 		t.Fatal("Build(syslog) returned nil connector")
 	}
-	if c.Name() != "syslog" {
-		t.Fatalf("Build(syslog) Name() = %q, want %q", c.Name(), "syslog")
+	if c.Name() != "my-syslog" {
+		t.Fatalf("Build(syslog) Name() = %q, want output name %q", c.Name(), "my-syslog")
 	}
 }
 
@@ -116,8 +116,8 @@ func TestBuildArgusXDR(t *testing.T) {
 	if c == nil {
 		t.Fatal("Build(argusxdr) returned nil connector")
 	}
-	if c.Name() != "argusxdr" {
-		t.Fatalf("Build(argusxdr) Name() = %q, want %q", c.Name(), "argusxdr")
+	if c.Name() != "my-xdr" {
+		t.Fatalf("Build(argusxdr) Name() = %q, want output name %q", c.Name(), "my-xdr")
 	}
 }
 
@@ -160,7 +160,7 @@ func TestBuildKafkaSASL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build(kafka+sasl) unexpected error: %v", err)
 	}
-	if c == nil || c.Name() != "kafka" {
+	if c == nil || c.Name() != "kafka-sasl" {
 		t.Fatalf("Build(kafka+sasl) returned wrong connector: %v", c)
 	}
 }
@@ -178,6 +178,32 @@ func TestBuildNilLogger(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("Build with nil logger returned nil connector")
+	}
+}
+
+// TestBuild_NameOverridesTypeForRouting is a regression guard: the agent's
+// dispatcher routes batches to connectors by the configured output name, and the
+// registry keys connectors by Name(). If Build returned a connector named after
+// its type instead of the output name, an output whose name differs from its
+// type (e.g. "kafka-prod" / "kafka") would silently never receive batches
+// ("connector not found"). Build must return Name() == the configured name for
+// every type.
+func TestBuild_NameOverridesTypeForRouting(t *testing.T) {
+	cases := []factory.FactoryInput{
+		{Name: "kafka-prod", Type: "kafka", Endpoint: "b:9092", Extra: map[string]interface{}{"topic": "t"}},
+		{Name: "siem-1", Type: "splunk_hec", Endpoint: "https://s:8088", Auth: map[string]string{"token": "x"}},
+		{Name: "es-east", Type: "elastic", Endpoint: "https://e:9200", Auth: map[string]string{"api_key": "a:b"}},
+		{Name: "rsyslog", Type: "syslog", Endpoint: "h:514"},
+		{Name: "xdr-primary", Type: "argusxdr", Endpoint: "x:443"},
+	}
+	for _, in := range cases {
+		c, err := factory.Build(in, zap.NewNop())
+		if err != nil {
+			t.Fatalf("Build(%s) error: %v", in.Type, err)
+		}
+		if c.Name() != in.Name {
+			t.Errorf("Build(%s) Name() = %q, want configured output name %q", in.Type, c.Name(), in.Name)
+		}
 	}
 }
 

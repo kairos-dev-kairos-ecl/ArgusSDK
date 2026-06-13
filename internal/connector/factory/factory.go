@@ -105,22 +105,48 @@ func Build(in FactoryInput, logger *zap.Logger) (connector.Connector, error) {
 	// T-04-02: log only Name and Type — never Auth or Extra.
 	logger.Debug("building connector", zap.String("name", in.Name), zap.String("type", in.Type))
 
+	var (
+		c   connector.Connector
+		err error
+	)
 	switch in.Type {
 	case "kafka":
-		return buildKafka(in)
+		c, err = buildKafka(in)
 	case "splunk_hec":
-		return buildSplunk(in)
+		c, err = buildSplunk(in)
 	case "elastic":
-		return buildElastic(in)
+		c, err = buildElastic(in)
 	case "syslog":
-		return buildSyslog(in)
+		c, err = buildSyslog(in)
 	case "argusxdr":
-		return buildArgusXDR(in)
+		c, err = buildArgusXDR(in)
 	default:
 		// T-04-01: closed switch; unknown type always errors — no nil/default connector returned.
 		return nil, fmt.Errorf("connector factory: unknown output type %q", in.Type)
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Register and route the connector under the operator-assigned output name
+	// (FactoryInput.Name), not its built-in type name. The agent's dispatcher
+	// targets connectors by the configured output name, so without this an output
+	// whose name differs from the connector type (e.g. name "kafka-prod",
+	// type "kafka") would never receive batches ("connector not found").
+	if in.Name != "" {
+		return namedConnector{Connector: c, name: in.Name}, nil
+	}
+	return c, nil
 }
+
+// namedConnector overrides Name() so a connector is keyed and routed by its
+// configured output name. All other behavior delegates to the embedded connector.
+type namedConnector struct {
+	connector.Connector
+	name string
+}
+
+func (n namedConnector) Name() string { return n.name }
 
 // buildKafka decodes Extra into kafka.Config, then overlays Endpoint (split on
 // commas into Brokers), Auth (SASL credentials), and TLS.

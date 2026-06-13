@@ -4,6 +4,18 @@ All notable changes to ArgusSDK are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-06-14
+
+### Fixed
+- **Output delivery for named connectors.** Connectors were registered under
+  their type name (e.g. `kafka`) while the dispatcher routes by the configured
+  output name (e.g. `kafka-prod`); any output whose name differed from its type
+  silently received no batches ("connector not found"). The factory now keys each
+  connector by its configured output name. Found via an end-to-end Kafka smoke
+  test; covered by a new regression test. (Unit/integration tests missed it
+  because they exercised `Send()` directly, bypassing name-based routing — and
+  the prior factory tests asserted the buggy behavior.)
+
 ## [1.0.0] — 2026-06-13
 
 First public release. ArgusSDK is a standalone, config-driven signal collection
@@ -81,4 +93,5 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Encrypted-at-rest agent state (AES-256-GCM).
 - Runs as a non-root user in the container image.
 
+[1.0.1]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.1
 [1.0.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.0
