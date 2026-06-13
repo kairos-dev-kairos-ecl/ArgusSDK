@@ -83,18 +83,10 @@ nfpms:
       postinstall: packaging/nfpm/postinstall.sh
       preremove: packaging/nfpm/preremove.sh
 
-dockers_v2:
-  - id: argus-agent
-    images:
-      - "ghcr.io/kairos-dev-kairos-ecl/argus-agent"
-    tags:
-      - "{{ .Version }}"
-      - "latest"
-    # Uses the prebuilt-binary Dockerfile (the root Dockerfile is a from-source
-    # build, whose context needs go.mod which is absent here).
-    dockerfile: packaging/docker/Dockerfile
-    platforms:
-      - "linux/amd64"
+# The container image is built and pushed separately in the release workflow via
+# docker/build-push-action (from the root Dockerfile, repo as context), then
+# cosign-signed. Keeping it out of GoReleaser avoids the prebuilt-binary context
+# constraints and keeps the binary/package release independent of the image.
 
 checksum:
   name_template: "checksums.txt"
@@ -118,17 +110,6 @@ signs:
       - "${artifact}"
       - "--yes"
     artifacts: checksum
-    output: true
-
-# Keyless signing of the container image (cosign + OIDC, also free).
-docker_signs:
-  - id: cosign-image
-    cmd: cosign
-    args:
-      - "sign"
-      - "--yes"
-      - "${artifact}"
-    artifacts: all
     output: true
 
 # Homebrew distribution (free macOS/Linux CLI install, no Gatekeeper friction)
