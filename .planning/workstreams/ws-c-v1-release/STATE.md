@@ -5,30 +5,28 @@ milestone_name: v1-release
 current_phase: 07
 current_plan: null
 status: in_progress
-stopped_at: "Phase 6 complete (2026-06-12). EUC OS Collectors: Linux eBPF (cilium/ebpf, bpf2go skeleton committed), Windows ETW (golang-etw Kernel-Network), macOS no-root gopsutil sampler (NetExt deferred). Exported NewOSCollector + agent wiring. CI cross-compile/isolation matrix. Verification PASSED. Next: Phase 7 Release Hardening."
-last_updated: "2026-06-12T00:00:00Z"
-last_activity: 2026-06-12
+stopped_at: "Phase 7 Wave 1: 07-01 (OCSF fidelity) + 07-02 (SIGHUP hot-reload) complete. Merged to main. Next: 07-04 (CI completeness), 07-03 (Wave 2), Phase 7 verification."
+last_updated: "2026-06-13T00:00:00Z"
+last_activity: 2026-06-13
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 11
-  completed_plans: 7
-  percent: 64
+  completed_plans: 9
+  percent: 82
 ---
 
 # WS-C v1.0 Release Hardening — State
 
 ## Current Position
 
-Phase: 07 (Release Hardening) — PENDING
-**Status:** Phase 6 complete; ready to execute Phase 7.
-**Last Activity:** 2026-06-12
-**Last Activity Description:** Phase 6 EUC OS Collectors complete — all 5 plans delivered and
-verified. Linux eBPF observer (cilium/ebpf, precompiled bpf2go skeleton in package euc, no cgo),
-Windows ETW observer (golang-etw Kernel-Network provider), macOS no-root gopsutil sampler (full
-NEDNSProxyProvider Network Extension deferred). Exported euc.NewOSCollector wires the
-build-tag-selected impl; agent updated. CI cross-compile matrix + dep-isolation assertions for all
-three GOOS (including generated bpf2go skeleton path). All three platforms cross-compile clean.
+Phase: 07 (Release Hardening) — IN PROGRESS  
+**Status:** Wave 1 complete (07-01 + 07-02); Wave 2 + verification pending.
+**Last Activity:** 2026-06-13
+**Last Activity Description:** Phase 7 Wave 1 complete.
+- 07-01 (OCSF fidelity): Injectable clock on Mapper; first-class WebResources/Databucket on Event; honest HTTP URL (never s.Category). Tests green.
+- 07-02 (SIGHUP hot-reload): Bounded reload (EUC watch list + log level only). EUC collector UpdateWatchList/WatchList seam; buildLogger returns live AtomicLevel; reloadConfig in reload.go; SIGHUP signal handler in agent.Run(). Tests green.
+Both merged to main. Next: 07-04 (CI completeness), 07-03 (Wave 2: config/docs/Makefile), Phase 7 verification, tracking update.
 
 ## Phases
 
