@@ -138,8 +138,7 @@ In rough priority order. **Help wanted — see [Contributing](#contributing).**
    not just Kafka.
 4. **Coverage/health telemetry** — so operators can prove the agent is actually
    seeing traffic (avoid silent gaps).
-5. **Enforcement layer** — policy-driven blocking of unauthorized AI tools.
-6. **Code signing** (Authenticode + Apple notarization) and real-XDR validation.
+5. **Code signing** (Authenticode + Apple notarization) and real-XDR validation.
 
 ## Contributing
 
