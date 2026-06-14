@@ -61,9 +61,15 @@ const (
 	// hostname watch list.
 	dnsClientProvider = "Microsoft-Windows-DNS-Client"
 
-	// dnsQueryCompletedEventID is the DNS-Client "query completed" event (3008),
-	// which carries QueryName for a resolved lookup.
-	dnsQueryCompletedEventID = 3008
+	// dnsQueryEventID is the DNS-Client "query issued" event (3006). It fires once
+	// per lookup and reliably carries QueryName (the hostname being resolved).
+	// The "completed" event (3008) does not carry a usable QueryName on all
+	// Windows builds, which is why earlier filtering on it captured nothing.
+	dnsQueryEventID = 3006
+
+	// dnsDedupTTL suppresses repeat detections of the same hostname within this
+	// window, so an app re-resolving an AI endpoint doesn't flood signals.
+	dnsDedupTTL = 60 * time.Second
 
 	// gopsutilInterval is how often the local-inference port sampler polls
 	// the OS connection table (via gopsutil, no elevation required).
@@ -82,6 +88,10 @@ type windowsCollector struct {
 	log    *zap.Logger
 	once   sync.Once
 	cancel context.CancelFunc
+
+	// dnsSeen dedups recent DNS detections by hostname (see dnsDedupTTL).
+	dnsMu   sync.Mutex
+	dnsSeen map[string]time.Time
 }
 
 // newOSCollector returns the Windows ETW + gopsutil OSCollector.
@@ -134,6 +144,12 @@ func (c *windowsCollector) startETW(ctx context.Context, out chan<- Observation)
 	cons := etw.NewRealTimeConsumer(ctx)
 	cons.FromSessions(s)
 
+	// golang-etw's default record-helper callback sets Skip on every event that
+	// doesn't match its provider filter, which (depending on the parsed provider
+	// GUID) drops everything before our callback runs. We filter by provider name
+	// ourselves in handleETWEvent, so install a no-op helper that never skips.
+	cons.EventRecordHelperCallback = func(*etw.EventRecordHelper) error { return nil }
+
 	cons.EventCallback = func(e *etw.Event) error {
 		c.handleETWEvent(e, out, ctx)
 		return nil
@@ -167,20 +183,20 @@ func (c *windowsCollector) handleETWEvent(e *etw.Event, out chan<- Observation, 
 	c.handleNetworkEvent(e, out, ctx)
 }
 
-// handleDNSEvent processes a Microsoft-Windows-DNS-Client query-completed event.
-// The QueryName is matched against the AI-endpoint catalog by hostname — this is
-// the cloud-AI detection path (Copilot, Cursor, Claude, Gemini, etc.).
+// handleDNSEvent processes a Microsoft-Windows-DNS-Client query-issued event
+// (3006). The QueryName is matched against the AI-endpoint catalog by hostname —
+// this is the cloud-AI detection path (Copilot, Cursor, Claude, Gemini, etc.).
+// Repeat lookups of the same host are deduped within dnsDedupTTL.
 func (c *windowsCollector) handleDNSEvent(e *etw.Event, out chan<- Observation, ctx context.Context) {
-	if int(e.System.EventID) != dnsQueryCompletedEventID {
+	if int(e.System.EventID) != dnsQueryEventID {
 		return
 	}
-	qname := boundedField(e, "QueryName")
-	if qname == "" {
+	// Normalize the trailing dot some resolvers include (untrusted input).
+	qname := strings.TrimSuffix(boundedField(e, "QueryName"), ".")
+	if qname == "" || !matchHost(qname, c.cfg.AIEndpoints) {
 		return
 	}
-	// Normalize the trailing dot some resolvers include.
-	qname = strings.TrimSuffix(qname, ".")
-	if !matchHost(qname, c.cfg.AIEndpoints) {
+	if c.dnsSeenRecently(qname) {
 		return
 	}
 
@@ -193,6 +209,24 @@ func (c *windowsCollector) handleDNSEvent(e *etw.Event, out chan<- Observation, 
 	case out <- obs:
 	case <-ctx.Done():
 	}
+}
+
+// dnsSeenRecently reports whether host was already emitted within dnsDedupTTL,
+// recording it as seen otherwise. Bounds signal volume when an app re-resolves
+// an AI endpoint repeatedly.
+func (c *windowsCollector) dnsSeenRecently(host string) bool {
+	key := strings.ToLower(host)
+	now := time.Now()
+	c.dnsMu.Lock()
+	defer c.dnsMu.Unlock()
+	if c.dnsSeen == nil {
+		c.dnsSeen = make(map[string]time.Time)
+	}
+	if t, ok := c.dnsSeen[key]; ok && now.Sub(t) < dnsDedupTTL {
+		return true
+	}
+	c.dnsSeen[key] = now
+	return false
 }
 
 // handleNetworkEvent processes a single ETW event from Microsoft-Windows-Kernel-Network.

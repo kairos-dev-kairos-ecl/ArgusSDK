@@ -17,7 +17,7 @@ import (
 // that detects Copilot/Cursor/Claude/Gemini/etc. by name. It exercises the
 // handler directly (no ETW session, so no elevation needed).
 func TestWindowsHandleDNSEvent(t *testing.T) {
-	c := &windowsCollector{cfg: Config{AIEndpoints: []string{"openai.com"}}}
+	c := &windowsCollector{cfg: Config{AIEndpoints: []string{"openai.com", "anthropic.com"}}}
 
 	mk := func(eventID uint16, qname string) *etw.Event {
 		e := etw.NewEvent()
@@ -30,8 +30,8 @@ func TestWindowsHandleDNSEvent(t *testing.T) {
 	out := make(chan Observation, 4)
 	ctx := context.Background()
 
-	// Matching query on the completed event → one outbound Observation.
-	c.handleETWEvent(mk(dnsQueryCompletedEventID, "api.openai.com."), out, ctx)
+	// Matching query-issued (3006) event → one outbound Observation.
+	c.handleETWEvent(mk(dnsQueryEventID, "api.openai.com."), out, ctx)
 	select {
 	case o := <-out:
 		if o.IsLocal {
@@ -44,13 +44,15 @@ func TestWindowsHandleDNSEvent(t *testing.T) {
 		t.Fatal("expected an Observation for a matching DNS query, got none")
 	}
 
-	// Non-matching host → no Observation.
-	c.handleETWEvent(mk(dnsQueryCompletedEventID, "example.com"), out, ctx)
-	// Non-completed event id → ignored even if it matches.
-	c.handleETWEvent(mk(3006, "api.openai.com"), out, ctx)
+	// Dedup: the same host again within the TTL produces nothing.
+	c.handleETWEvent(mk(dnsQueryEventID, "api.openai.com"), out, ctx)
+	// Non-matching host → nothing.
+	c.handleETWEvent(mk(dnsQueryEventID, "example.com"), out, ctx)
+	// Wrong event id (3008) for a fresh matching host → ignored (proves id filter).
+	c.handleETWEvent(mk(3008, "api.anthropic.com"), out, ctx)
 	select {
 	case o := <-out:
-		t.Errorf("expected no Observation, got %+v", o)
+		t.Errorf("expected no further Observation, got %+v", o)
 	default:
 	}
 }

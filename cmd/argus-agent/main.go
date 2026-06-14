@@ -77,6 +77,11 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	}
 	defer logger.Sync() //nolint:errcheck
 
+	// Make the configured logger the global one. The EUC collector logs via
+	// zap.L() (e.g. ETW provider degradation), which is a no-op until this is set
+	// — without it those diagnostics silently vanish.
+	zap.ReplaceGlobals(logger)
+
 	var cfg agent.Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return fmt.Errorf("config unmarshal: %w", err)

@@ -4,6 +4,24 @@ All notable changes to ArgusSDK are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-06-14
+
+### Fixed
+- **Windows cloud-AI detection now actually works.** 1.1.0 shipped the DNS
+  capture non-functional: the handler only accepted ETW DNS-Client event 3008,
+  which does not carry a usable `QueryName` on current Windows builds, so every
+  query was dropped. It now matches event **3006** (query issued) and dedups
+  repeat lookups. Verified live end-to-end: the agent detected `claude.exe`
+  reaching `api.anthropic.com` (with process attribution) and forwarded it as an
+  OCSF `euc.ai_access` event to Kafka.
+- **EUC collector logs were silently discarded.** The Windows collector logs via
+  `zap.L()` (global logger), which was never initialized, so ETW warnings and
+  degradation were invisible. The agent now installs the configured logger as the
+  global one.
+- **MSI installer log path.** The installer wrote `logging.file` under the wrong
+  YAML section, so file logging never activated; it is now placed under
+  `logging:` correctly.
+
 ## [1.1.0] — 2026-06-14
 
 ### Added
@@ -107,5 +125,6 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Encrypted-at-rest agent state (AES-256-GCM).
 - Runs as a non-root user in the container image.
 
+[1.1.1]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.1.1
 [1.1.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.0
