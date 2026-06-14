@@ -42,6 +42,12 @@ AI tool on endpoint ──DNS/port──▶ EUC collector ─┐
 instrumented app ──gRPC──▶ ingest listener ──────┘        (WAL buffer on outage)
 ```
 
+**Scope (by design).** Argus is **visibility only** — it surfaces *which* AI
+services are in use, with process attribution. Acting on that (allow, alert, or
+block) is done by the controls you **already run** — firewall, proxy/CASB, EDR,
+MDM — consuming Argus's OCSF output. Argus deliberately stays observe-only and
+low-privilege; enforcement is **not a goal** of this project, by design.
+
 ## Capabilities
 
 Honest matrix — ✅ verified live, ⚠️ in-tree but unverified, ❌ not implemented.
@@ -69,8 +75,6 @@ mode for a security tool:
   capture (Windows uses the ETW DNS-Client provider); the Linux eBPF and macOS
   Network-Extension equivalents are **not implemented/verified**. On those
   platforms only local-inference ports may be seen, and that path is unverified.
-- **No enforcement/blocking.** Argus is observe-only by design. Detecting *and
-  blocking* unauthorized AI tools is a future phase, not present today.
 - **Only the Kafka output is proven end-to-end through the agent.** Elastic and
   Splunk connectors pass integration tests in CI; the full ingest→route→deliver
   path has only been exercised live for Kafka. Treat the rest as beta.
