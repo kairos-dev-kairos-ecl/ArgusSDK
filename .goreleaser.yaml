@@ -13,6 +13,10 @@ before:
   hooks:
     - go mod tidy
 
+# Windows-only release. Linux/macOS detection is unverified, so their packages
+# are intentionally NOT published (honesty over breadth). The Linux/macOS build
+# is still exercised by the CI cross-compile job, and the packaging assets under
+# packaging/ remain in-tree for contributors. See README "Capabilities".
 builds:
   - id: argus-agent
     main: ./cmd/argus-agent
@@ -24,9 +28,7 @@ builds:
     ldflags:
       - -s -w -X main.version={{ .Version }}
     goos:
-      - linux
       - windows
-      - darwin
     goarch:
       - amd64
       - arm64
@@ -36,9 +38,7 @@ archives:
     ids:
       - argus-agent
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats: [zip]
+    formats: [zip]
     files:
       - LICENSE
       - NOTICE
@@ -46,52 +46,6 @@ archives:
       - CHANGELOG.md
       - config/agent.default.yaml
       - config/agent.example.yaml
-      - packaging/systemd/argus-agent.service
-      - packaging/launchd/org.kairos-foundation.argus-agent.plist
-      - packaging/macos/install.sh
-      - packaging/macos/uninstall.sh
-
-# Native Linux packages: install the binary, the systemd unit, and a default
-# config, and create the service user via the maintainer scripts.
-nfpms:
-  - id: linux-packages
-    package_name: argus-agent
-    ids:
-      - argus-agent
-    vendor: Kairos Foundation
-    homepage: https://kairos-foundation.org
-    maintainer: Kairos Foundation <security@kairos-foundation.org>
-    description: |
-      Argus SDK Agent — collects LLM and Shadow-AI signals and forwards them to
-      ArgusXDR or external SIEM destinations (OCSF).
-    license: Apache-2.0
-    formats:
-      - deb
-      - rpm
-    bindir: /usr/bin
-    contents:
-      - src: packaging/systemd/argus-agent.service
-        dst: /lib/systemd/system/argus-agent.service
-      # Safe local-mode default so the service starts cleanly on install.
-      - src: config/agent.default.yaml
-        dst: /etc/argus-agent/agent.yaml
-        type: config|noreplace
-      # Full remote/XDR reference, shipped alongside for operators.
-      - src: config/agent.example.yaml
-        dst: /etc/argus-agent/agent.example.yaml
-      - dst: /var/lib/argus-agent
-        type: dir
-        file_info:
-          mode: 0750
-    scripts:
-      preinstall: packaging/nfpm/preinstall.sh
-      postinstall: packaging/nfpm/postinstall.sh
-      preremove: packaging/nfpm/preremove.sh
-
-# The container image is built and pushed separately in the release workflow via
-# docker/build-push-action (from the root Dockerfile, repo as context), then
-# cosign-signed. Keeping it out of GoReleaser avoids the prebuilt-binary context
-# constraints and keeps the binary/package release independent of the image.
 
 checksum:
   name_template: "checksums.txt"

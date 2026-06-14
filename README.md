@@ -2,296 +2,166 @@
   <img src="docs/assets/argus-logo.png" alt="Argus" width="220"/>
 </p>
 
-# ArgusSDK — Signal Collection Agent
+# ArgusSDK — Shadow-AI Visibility Agent
 
-ArgusSDK is a standalone, lightweight, config-driven signal collection and forwarding agent written in Go. Its mental model is NXLog: it collects signals from configured sources, normalises them internally, and routes them to configured output destinations.
-
-**ArgusSDK is the agent. ArgusXDR is one possible destination among many.**
-
-The Python and TypeScript instrumentation libraries (in the ArgusXDR repo under `sdk/`) are instrumentation libraries only — they embed in LLM applications and emit signals to the local ArgusSDK agent. The agent owns all transport, batching, buffering, and routing.
-
----
-
-## Two Output Modes
-
-### Mode 1 — ArgusXDR output (native proto)
-
-When the destination is an ArgusXDR instance, the agent emits signals in the existing `ArgusSignal` protobuf format. No OCSF translation. XDR's internal schema, pipeline, ClickHouse storage, detection engine, and backpressure logic are unchanged. This is the mode for users who run the full Argus platform.
-
-### Mode 2 — External/SIEM output (OCSF)
-
-When the destination is an external platform (Kafka, Splunk, Sentinel, Chronicle, Elastic, etc.), the agent translates signals to [OCSF v1.3](https://schema.ocsf.io/) before delivery. OCSF mapping lives entirely in the agent (`internal/ocsf/`). XDR never sees OCSF and does not need to change.
-
-OCSF is a switch, not a rewrite. The `ArgusSignal` proto stays. Set `ocsf: true` on an output connector to enable translation for that destination.
+> **Status: public beta — Windows-first.** Honest about what works today. The
+> Windows agent detects cloud and local AI-tool usage and forwards it to your
+> SIEM. Linux and macOS exist in the tree but are **not** verified or shipped
+> yet (see [Capabilities](#capabilities)). This is an early, transparent
+> release — contributions welcome via PRs.
 
 ---
 
-## Authentication Model
+## The gap
 
-The SDK authentication model follows the EDR agent pattern (CrowdStrike / SentinelOne):
+Engineering, support, and analyst teams are adopting AI tools faster than
+security can see them — Copilot, Cursor, Windsurf/Codeium, Claude, ChatGPT,
+Gemini, local models via Ollama, and dozens more. Most of this is **invisible**
+to existing EDR/DLP: it looks like ordinary HTTPS to ordinary domains. Security
+teams can't answer the basic question: *which AI services are our endpoints
+actually talking to, and from which processes?*
 
-1. **Admin creates an Agent Group** in the ArgusXDR portal  
-   → receives: **Group ID** + **Installation Token** (one-time use, time-limited)
+**Argus exists to make that visible** — a lightweight endpoint agent that detects
+AI-service access (by the hostname seen in DNS, plus local inference ports),
+normalizes it to [OCSF](https://schema.ocsf.io/), and forwards it to the SIEM you
+already run. It is deliberately **low-privilege and observe-only**: no process
+enumeration, no file monitoring, no packet/content capture.
 
-2. **Agent starts on an endpoint or server**  
-   → presents: Group ID + Installation Token to the XDR registration endpoint  
-   → XDR verifies, registers the instance, returns: **SDK Instance ID** (server-assigned UUID)  
-   → Installation Token is consumed and invalidated after use
+## What it is
 
-3. **All subsequent signal submission**  
-   → Agent presents: Group ID + Instance ID + API credential  
-   → XDR stamps the server-verified Instance ID on every ingested signal batch  
-   → `instance_id` is never self-reported by the SDK
+A standalone, config-driven collection agent (mental model: NXLog/rsyslog, but
+for AI-tool telemetry). It collects signals from two sources — an **EUC**
+collector (Shadow-AI on endpoints) and a **gRPC ingest** listener (for the
+Python/TypeScript instrumentation libraries) — and routes them to configured
+outputs (Kafka, Splunk, Elastic, syslog, or ArgusXDR), translating to OCSF for
+non-XDR destinations.
 
-Every signal is traceable to a server-verified SDK instance, not to whatever the agent self-reports.
-
----
-
-## Local vs Remote Mode
-
-| | Local | Remote |
-|---|---|---|
-| Transport | Loopback TCP or Unix socket | TLS 1.3 (mandatory, no downgrade) |
-| Auth | Simplified (file permissions on Unix socket) | Full three-part auth |
-| Use case | Developer, single-machine deployments | Fleet deployments, cloud XDR |
-
-### Local signal buffering
-
-When output connectors are unreachable, signals queue locally in the agent using a flat-file write-ahead log (WAL). When connectivity restores, the buffer drains in order with exponential backoff and jitter on reconnect to prevent fleet-wide thundering-herd against the ingest endpoint.
-
----
-
-## EUC (End User Computing) — Shadow AI Observability
-
-On enterprise endpoints, the agent's **sole purpose** is detecting which AI services are being accessed. It does not duplicate existing EDR telemetry (no general process enumeration, file access monitoring, or memory inspection).
-
-**What the EUC collector watches:**
-- **Cloud AI services, by hostname.** It matches DNS queries against a built-in
-  catalog of AI services (OpenAI, Anthropic, Gemini, GitHub Copilot, Cursor,
-  Windsurf/Codeium, Cody, Tabnine, etc.), extendable via `ingest.euc.ai_endpoints`.
-  This is how it detects AI coding assistants and chat tools used on an endpoint.
-- **Local AI runtimes**, by port (Ollama :11434, LM Studio :1234, vLLM :8000).
-
-**What it explicitly does not do:**
-- General process enumeration or monitoring
-- File system access monitoring
-- Full network flow capture
-- Content inspection of AI API payloads
-- **Blocking/enforcement** — the agent is observe-only by design. Controlling or
-  blocking unauthorized AI tools is a separate (future) enforcement capability.
-
-OS-specific implementations:
-- `windows.go` — ETW: **DNS-Client** provider for hostname-based cloud-AI
-  detection + Kernel-Network for connection metadata, plus a gopsutil local-port
-  sampler. Requires the service's LocalSystem context (or Performance Log Users)
-  for the ETW session; degrades to local-port sampling otherwise.
-- `linux.go` — eBPF kprobe on `tcp_v4/v6_connect` + gopsutil local-port sampler
-  (degrades gracefully without `CAP_BPF`). DNS-based hostname capture is the next
-  increment; today Linux reliably detects local inference.
-- `darwin.go` — no-root established-connection sampler via gopsutil. A full
-  `NEDNSProxyProvider` Network Extension (for hostname capture) is deferred — it
-  requires a signed, notarized `.app` with a managed entitlement.
-
-> **Detection vs. control.** v1.x delivers *visibility* (which AI tools are in
-> use). Hostname detection is live on Windows (DNS-Client ETW); Linux/macOS DNS
-> capture and a policy-driven enforcement layer are on the roadmap.
-
----
-
-## Installation
-
-The agent ships as a native, installable service for each platform (like NXLog
-or rsyslog) plus a container image. Download the artifact for your OS from the
-[latest release](https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases),
-then configure `/etc/argus-agent/agent.yaml` before starting.
-
-### Linux (.deb / .rpm)
-
-```bash
-# Debian/Ubuntu
-sudo dpkg -i argus-agent_<version>_linux_amd64.deb
-# RHEL/Fedora/SUSE
-sudo rpm -i argus-agent-<version>.x86_64.rpm
-
-# The package installs a systemd unit and a default config. Edit it, then:
-sudo nano /etc/argus-agent/agent.yaml
-sudo systemctl enable --now argus-agent
-sudo systemctl status argus-agent          # check it's running
-sudo systemctl reload argus-agent          # apply EUC/log-level changes (SIGHUP)
+```
+AI tool on endpoint ──DNS/port──▶ EUC collector ─┐
+                                                  ├─▶ OCSF map ─▶ outputs[] ─▶ your SIEM
+instrumented app ──gRPC──▶ ingest listener ──────┘        (WAL buffer on outage)
 ```
 
-### Windows (MSI installer)
+## Capabilities
+
+Honest matrix — ✅ verified live, ⚠️ in-tree but unverified, ❌ not implemented.
+
+| Capability | Windows | Linux | macOS |
+|---|---|---|---|
+| **Cloud AI detection** (Copilot/Cursor/Claude/Gemini/… by DNS hostname) | ✅ verified | ❌ not yet | ❌ not yet |
+| **Local inference detection** (Ollama/LM Studio/vLLM ports) | ✅ verified | ⚠️ unverified | ⚠️ unverified |
+| **Managed service install** | ✅ MSI (one-click / `msiexec /quiet`) | ⚠️ internal only | ⚠️ internal only |
+| **Signal pipeline → SIEM (OCSF)** | ✅ verified to Kafka | (same code) | (same code) |
+| **Output connectors** | Kafka ✅ live · Elastic/Splunk ✅ CI-tested · syslog/argusxdr ⚠️ unit-tested | | |
+| **Process attribution on detections** | ✅ | ⚠️ | ⚠️ |
+| **Supply-chain signing** (cosign + SLSA provenance) | ✅ | — | — |
+
+What "verified" means here: run on a real host, observed end-to-end. For example
+the agent detected `claude.exe → api.anthropic.com` and delivered it as an OCSF
+`euc.ai_access` event to Kafka, with the originating process name.
+
+## What it does NOT do yet
+
+Being explicit so no one assumes coverage they don't have — the worst failure
+mode for a security tool:
+
+- **No cloud-AI detection on Linux or macOS.** The hostname match needs DNS
+  capture (Windows uses the ETW DNS-Client provider); the Linux eBPF and macOS
+  Network-Extension equivalents are **not implemented/verified**. On those
+  platforms only local-inference ports may be seen, and that path is unverified.
+- **No enforcement/blocking.** Argus is observe-only by design. Detecting *and
+  blocking* unauthorized AI tools is a future phase, not present today.
+- **Only the Kafka output is proven end-to-end through the agent.** Elastic and
+  Splunk connectors pass integration tests in CI; the full ingest→route→deliver
+  path has only been exercised live for Kafka. Treat the rest as beta.
+- **Remote/XDR mode is mock-tested only** — never run against a live ArgusXDR.
+- **Installers are unsigned** — expect SmartScreen/Gatekeeper prompts until
+  code-signing certificates are configured.
+- **Not load/scale tested** for large fleets.
+
+## Install (Windows)
+
+Download `argus-agent_<version>_windows_amd64.msi` from the
+[latest release](https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases).
 
 ```powershell
-# Interactive: double-click the .msi, or run
-msiexec /i argus-agent_<version>_windows_amd64.msi
-
-# Silent, for MDM / Intune / SCCM:
+# interactive, or silent for MDM/Intune:
 msiexec /i argus-agent_<version>_windows_amd64.msi /quiet
 ```
 
-The installer registers and starts the **argus-agent** Windows service (auto-start
-at boot) and writes a default config to `C:\ProgramData\argus-agent\agent.yaml`.
-The default runs in **local mode** so the service starts immediately with no
-credentials; push your managed config (or switch to `mode: remote`) via MDM, then
-restart the service to apply:
+The installer registers and starts the **argus-agent** Windows service
+(auto-start), writes a default config to `C:\ProgramData\argus-agent\agent.yaml`,
+and logs to `C:\ProgramData\argus-agent\logs\agent.log`. The default runs in
+local mode (no credentials). Edit the config to add your output, then:
 
 ```powershell
 Restart-Service argus-agent
 ```
 
-Uninstall removes the service (`msiexec /x …` or Add/Remove Programs). The binary
-also exposes `argus-agent service install|start|stop|uninstall` for manual setups.
+> **Linux / macOS:** not published yet. The `.deb`/`.rpm`/systemd, launchd, and
+> container assets live under `packaging/` and `deploy/` for testing and
+> contributors, but are intentionally **not** in the release until verified.
+> Build from source at your own risk: `go build ./cmd/argus-agent`.
 
-### macOS (launchd)
+## Configuration
 
-```bash
-# Extract the darwin archive, then:
-sudo ./packaging/macos/install.sh
-sudo nano /etc/argus-agent/agent.yaml
-sudo launchctl load -w /Library/LaunchDaemons/org.kairos-foundation.argus-agent.plist
-```
+The agent is driven by one YAML file. Full reference:
+**[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**. The essentials:
 
-### Docker / Kubernetes
+- **What to watch** — `ingest.euc.ai_endpoints` (added to a built-in catalog of
+  common AI services) and `local_inference_ports`.
+- **Where detections go** — `outputs[]` (Kafka/Splunk/Elastic/syslog/ArgusXDR;
+  set `ocsf: true` to translate). **This — not the agent log — is where your
+  detections end up.**
+- **Agent's own log** — `logging.file` is diagnostics only.
 
-```bash
-docker run -v /etc/argus-agent:/etc/argus-agent \
-  ghcr.io/kairos-dev-kairos-ecl/argus-agent:latest
-```
+## How it works
 
-A reference manifest is in [`deploy/kubernetes/deployment.yaml`](deploy/kubernetes/deployment.yaml).
+- **EUC collector** (`internal/collector/euc/`) — Windows uses ETW: the
+  **DNS-Client** provider for hostname-based cloud-AI detection, plus a gopsutil
+  sampler for local-inference ports. Linux (eBPF) and macOS (gopsutil sampler;
+  Network Extension deferred) are present but unverified.
+- **OCSF mapper** (`internal/ocsf/`) — translates signals to OCSF v1.3 for
+  external destinations; ArgusXDR receives the native `ArgusSignal` proto.
+- **Dispatcher + WAL buffer** — fans batches to outputs; persists to a
+  write-ahead log during outages and drains on reconnect.
+- **Observability** — `/healthz`, `/readyz`, Prometheus `/metrics`.
 
-### Build from source
+## Roadmap (the work to ship it fully)
 
-```bash
-make build                 # compile for the current platform
-make install               # install argus-agent to GOPATH/bin
-cp config/agent.example.yaml agent.yaml
-argus-agent --config agent.yaml
-```
+In rough priority order. **Help wanted — see [Contributing](#contributing).**
 
-> The first run in `mode: remote` triggers XDR registration (Group ID + install
-> token → server-assigned instance ID). See [Deployment](#deployment) below.
+1. **Linux cloud-AI detection** — DNS capture via eBPF, to reach Windows parity.
+2. **macOS cloud-AI detection** — `NEDNSProxyProvider` Network Extension (needs
+   signing/notarization) + a `.pkg` installer.
+3. **End-to-end verification of every output** (Splunk/Elastic/syslog/ArgusXDR),
+   not just Kafka.
+4. **Coverage/health telemetry** — so operators can prove the agent is actually
+   seeing traffic (avoid silent gaps).
+5. **Enforcement layer** — policy-driven blocking of unauthorized AI tools.
+6. **Code signing** (Authenticode + Apple notarization) and real-XDR validation.
 
-## Instrumenting an application
+## Contributing
 
-Your LLM app sends signals to the **local agent**, not directly to XDR:
+This is an honest early-stage project and contributions are very welcome —
+especially the roadmap items above. Please:
 
-```python
-# Python
-from argus_sdk import ArgusClient
-client = ArgusClient(endpoint="http://127.0.0.1:5002")
-client.emit(layer="L9_API_GATEWAY", category="api.request", severity="INFO")
-```
+- Open an issue describing the change before large work.
+- Submit focused **pull requests** with tests; CI (`go build`/`vet`/`test`,
+  race, cross-compile) must pass.
+- For a new platform detector or output, include an integration test and, where
+  possible, evidence of a live run.
 
----
-
-## Observability
-
-A single HTTP server (bind address `observability.addr`, default `127.0.0.1:9090`) exposes:
-
-- **Liveness probe** (`GET /healthz`) — returns `200 OK` once the process is serving.
-- **Readiness probe** (`GET /readyz`) — returns `200 OK` once startup completes and connectors are wired; `503` otherwise so orchestrators hold traffic until the agent is ready.
-- **Metrics endpoint** (`GET /metrics`) — Prometheus text-format dispatcher counters (`argus_dispatch_accepted_total`, `_delivered_total`, `_failed_total`, `_dropped_total`). No client library; the format is hand-rolled to avoid a dependency.
-
-The server is on by default. Bind `0.0.0.0` in containers so the kubelet can reach the probes at the pod IP, or set `observability.disabled: true` to turn it off entirely.
-
----
-
-## Deployment
-
-### XDR Registration Flow
-
-1. **Admin creates Agent Group** in ArgusXDR → receives Group ID + Install Token
-2. **Agent starts** with install_token in config → calls XDR registration endpoint
-3. **XDR verifies token, assigns Instance ID** → stored in encrypted agent-state.json
-4. **Clear install_token** from config after registration succeeds
-5. **Subsequent signal submissions** use Group ID + Instance ID + rotating API credential
-
-### Credential Refresh
-
-The agent automatically rotates API credentials. Fresh credentials are requested on a schedule or after failures. XDR returns new credentials as part of every signal submission response.
-
-### Hot-reload via SIGHUP
-
-Send SIGHUP to the agent process to trigger config reload without restarting:
-
-```bash
-kill -HUP $(pidof argus-agent)
-```
-
-Hot-reload is intentionally **bounded**: SIGHUP re-applies only the EUC watch list (`AIEndpoints` + `LocalInferencePorts`) and the log level. Transport, auth, and output topology are not reloaded — those require a restart by design, so a bad edit can never silently re-wire delivery. In-flight signals are preserved in the WAL buffer throughout.
-
----
-
-## Directory Structure
-
-```
-argus-sdk/
-├── cmd/argus-agent/        # Binary entry point (cobra CLI)
-├── internal/
-│   ├── agent/              # Core lifecycle: start/stop, config wiring,
-│   │                       #   observability server, SIGHUP reload
-│   ├── auth/               # Registration, credential refresh, encrypted state
-│   ├── buffer/             # WAL-backed local signal buffer
-│   ├── collector/
-│   │   ├── collector.go    # Collector interface
-│   │   ├── llm/            # gRPC listener for Python/TS instrumentation libs
-│   │   └── euc/            # Shadow AI OS-level collector (Linux/Windows/macOS)
-│   ├── connector/
-│   │   ├── connector.go    # Connector interface + registry + dispatcher
-│   │   ├── factory/        # Connector factory (instantiation by type)
-│   │   ├── argusxdr/       # Mode 1: ArgusSignal proto → XDR
-│   │   ├── kafka/          # Mode 2: OCSF → Kafka
-│   │   ├── splunk/         # Mode 2: OCSF → Splunk HEC
-│   │   ├── elastic/        # Mode 2: OCSF → Elasticsearch
-│   │   └── syslog/         # CEF/ArcSight → syslog server
-│   ├── ocsf/               # ArgusSignal → OCSF v1.3 mapper
-│   ├── dryrun/             # Offline OCSF validation + signal recorder/loader
-│   ├── resilience/         # Circuit breaker, token-bucket rate limiter
-│   └── secrets/            # AES-256-GCM encrypted secrets store
-├── pkg/signal/             # Public signal types (consumed by instrumentation libs)
-├── proto/                  # Protocol buffer definitions (gen/ is generated output)
-├── packaging/              # systemd unit, launchd plist, nfpm + macOS scripts
-├── deploy/kubernetes/      # Reference Kubernetes manifest
-├── test/llmsignal/         # End-to-end integration harness
-├── docs/                   # RELEASING and other operator docs
-├── config/agent.example.yaml
-├── .goreleaser.yaml        # Release build: binaries, deb/rpm, docker, signing
-├── Dockerfile              # Distroless/static container image
-├── Makefile
-├── go.mod
-└── README.md
-```
-
----
-
-## Technology Stack
-
-| Concern | Library |
-|---------|---------|
-| CLI | `github.com/spf13/cobra` |
-| Config | `github.com/spf13/viper` |
-| Logging | `go.uber.org/zap` |
-| gRPC | `google.golang.org/grpc` |
-| Protobuf | `google.golang.org/protobuf` |
-| OS telemetry (Linux) | `github.com/cilium/ebpf` |
-| OS telemetry (Windows) | `github.com/0xrawsec/golang-etw` |
-| System metrics | `github.com/shirou/gopsutil/v4` |
-| Kafka connector | `github.com/twmb/franz-go` |
-| Test infrastructure | `github.com/testcontainers/testcontainers-go` |
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test details and
+[SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Relationship to ArgusXDR
 
-ArgusSDK is a **sibling project**, not a fork or internal component of ArgusXDR. The only shared artifact is the `ArgusSignal` protobuf schema — the SDK uses it for Mode 1 output; XDR uses it internally throughout its pipeline.
+ArgusSDK is a **sibling project**, not part of ArgusXDR. The only shared artifact
+is the `ArgusSignal` protobuf schema (used for Mode-1 output). Do not import
+XDR-internal packages from the SDK.
 
-Do not import XDR-internal packages from the SDK. The boundary is the proto schema and the public gRPC ingest API.
-
----
-
-## Documentation & Project
+## Documentation & project
 
 | | |
 |---|---|
@@ -304,5 +174,5 @@ Do not import XDR-internal packages from the SDK. The boundary is the proto sche
 
 ## License
 
-ArgusSDK is licensed under the [Apache License 2.0](LICENSE). Contributions are
-accepted under the same license; see [CONTRIBUTING.md](CONTRIBUTING.md).
+ArgusSDK is licensed under the [Apache License 2.0](LICENSE). © 2026 Kairos
+Foundation. Contributions are accepted under the same license.

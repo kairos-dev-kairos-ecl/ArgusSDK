@@ -4,6 +4,24 @@ All notable changes to ArgusSDK are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-06-14
+
+Honesty-first repositioning. No functional code change — this scopes the public
+release to what is actually verified.
+
+### Changed
+- Rewrote the README to lead with the problem (the gap), state a per-platform
+  **verified-vs-unverified capability matrix**, list explicitly what the product
+  **cannot do yet**, add a roadmap, and invite contributions via PRs.
+
+### Removed (from published releases)
+- **Linux (`.deb`/`.rpm`), macOS, and the container image are no longer
+  published.** Their detection paths are unverified, so shipping them would imply
+  coverage that doesn't exist. Releases now ship **Windows only** (MSI + zip +
+  cosign-signed checksums + SLSA provenance). The Linux/macOS build and packaging
+  assets remain in-tree (`packaging/`, `deploy/`) for contributors and CI
+  cross-compile testing.
+
 ## [1.1.1] — 2026-06-14
 
 ### Fixed
@@ -125,6 +143,7 @@ and forwarding agent for LLM applications and enterprise endpoints.
 - Encrypted-at-rest agent state (AES-256-GCM).
 - Runs as a non-root user in the container image.
 
+[1.2.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.2.0
 [1.1.1]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.1.1
 [1.1.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kairos-dev-kairos-ecl/ArgusSDK/releases/tag/v1.0.0
