@@ -295,6 +295,7 @@ Do not import XDR-internal packages from the SDK. The boundary is the proto sche
 
 | | |
 |---|---|
+| Configuration & rules (YAML reference) | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
 | Release notes | [CHANGELOG.md](CHANGELOG.md) |
 | Building & cutting a release | [docs/RELEASING.md](docs/RELEASING.md) |
 | Contributing & local development | [CONTRIBUTING.md](CONTRIBUTING.md) |
